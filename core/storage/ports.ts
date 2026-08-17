@@ -1,0 +1,72 @@
+import type {
+  AppConfig,
+  AssetRecord,
+  DeviceIdentity,
+  OutboxEntry,
+  ProviderCursor,
+  Shortcut,
+  ShortcutGroup,
+  SyncCheckpoint,
+  SyncMetadata,
+  SyncMode,
+  Wallpaper,
+} from '../domain/types';
+import type { DesktopPlacement } from '../domain/desktop';
+import type { WidgetPosition } from '../domain/widgets';
+
+export interface ConfigRepository {
+  initialize(): Promise<AppConfig>;
+  getConfig(): Promise<AppConfig>;
+  addGroup(name: string, position?: WidgetPosition): Promise<ShortcutGroup>;
+  updateGroup(id: string, patch: Pick<ShortcutGroup, 'name' | 'collapsed'>): Promise<void>;
+  deleteGroup(id: string): Promise<void>;
+  addShortcut(input: Pick<Shortcut, 'name' | 'url' | 'groupId'> & { position?: WidgetPosition }): Promise<Shortcut>;
+  updateShortcut(id: string, input: Pick<Shortcut, 'name' | 'url' | 'groupId'>): Promise<void>;
+  moveShortcut(id: string, groupId: string, beforeId?: string, afterId?: string, position?: WidgetPosition): Promise<void>;
+  moveGroup(id: string, beforeId?: string, afterId?: string): Promise<void>;
+  deleteShortcut(id: string): Promise<void>;
+  applyDesktopPlacements(placements: DesktopPlacement[]): Promise<void>;
+  updateAppearance<K extends keyof AppConfig['appearance']>(key: K, value: AppConfig['appearance'][K]['value']): Promise<void>;
+  setWallpaper(wallpaper: Wallpaper): Promise<void>;
+  subscribe(listener: () => void): () => void;
+}
+
+/** Persistence operations required by provider-neutral synchronization. */
+export interface SyncRepository {
+  initialize(): Promise<AppConfig>;
+  getConfig(): Promise<AppConfig>;
+  getMetadata(): Promise<SyncMetadata>;
+  getOutbox(): Promise<OutboxEntry[]>;
+  getSyncMode(): Promise<SyncMode>;
+  setSyncMode(mode: SyncMode): Promise<void>;
+  getDeviceIdentity(): Promise<DeviceIdentity>;
+  putCursor(cursor: ProviderCursor): Promise<void>;
+  getCursor(providerId: string): Promise<ProviderCursor | undefined>;
+  removeOutbox(opIds: string[]): Promise<void>;
+  createCheckpoint(): Promise<SyncCheckpoint>;
+  replaceFromSync(
+    config: AppConfig,
+    metadata: SyncMetadata,
+    identity: DeviceIdentity,
+    cursor: ProviderCursor,
+    options?: { pendingRevision?: OutboxEntry['revision']; discardOutbox?: boolean },
+  ): Promise<void>;
+  updateSyncControl(metadata: SyncMetadata, identity: DeviceIdentity, cursor: ProviderCursor): Promise<void>;
+  importExternalSync(remote: AppConfig): Promise<void>;
+}
+
+export interface AssetRepository {
+  setUploadedWallpaper(blob: Blob): Promise<void>;
+  putAsset(key: string, blob: Blob, sourceUrl?: string): Promise<void>;
+  getAsset(key: string): Promise<Blob | undefined>;
+  getAssetRecord(key: string): Promise<AssetRecord | undefined>;
+}
+
+export interface BackupRepository {
+  getDeviceIdentity(): Promise<DeviceIdentity>;
+  replaceFromImport(config: AppConfig, wallpaper?: Blob): Promise<void>;
+  createCheckpoint(): Promise<SyncCheckpoint>;
+  restoreLatestCheckpoint(): Promise<boolean>;
+}
+
+export type AppUnitOfWork = ConfigRepository & SyncRepository & AssetRepository & BackupRepository;
