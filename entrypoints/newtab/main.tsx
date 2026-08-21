@@ -4,6 +4,7 @@ import { t } from '../../core/browser/i18n';
 import { App } from './App';
 import './style.css';
 import './settings.css';
+import './folder.css';
 
 document.title = t('newTabTitle');
 ReactDOM.createRoot(document.getElementById('root')!).render(

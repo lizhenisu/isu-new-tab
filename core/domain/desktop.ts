@@ -2,6 +2,7 @@ import { compareBySortKey } from './sort';
 import { DEFAULT_GROUP_ID, type AppConfig, type Shortcut, type ShortcutGroup } from './types';
 import {
   DASHBOARD_COLUMNS,
+  DASHBOARD_ROW_HEIGHT,
   resolveWidgetLayout,
   type SystemWidgetId,
   type WidgetPosition,
@@ -23,12 +24,19 @@ export type DesktopPlacement = {
   sizePreset?: WidgetSizePreset;
 };
 
-export type SystemWidgetWidthOverrides = Partial<Record<SystemWidgetId, number>>;
+export type SystemWidgetFootprintOverrides = Partial<Record<SystemWidgetId, Partial<Pick<WidgetPosition, 'width' | 'height'>>>>;
 
 export function measuredWidthToGridColumns(measuredWidth: number, boardWidth: number): number {
   if (!Number.isFinite(measuredWidth) || !Number.isFinite(boardWidth) || measuredWidth <= 0 || boardWidth <= 0) return 1;
   const columnWidth = boardWidth / DASHBOARD_COLUMNS;
   return Math.max(1, Math.min(DASHBOARD_COLUMNS, Math.ceil((measuredWidth - 0.5) / columnWidth)));
+}
+
+export function measuredSizeToGridFootprint(measuredWidth: number, measuredHeight: number, boardWidth: number): Pick<WidgetPosition, 'width' | 'height'> {
+  const height = Number.isFinite(measuredHeight) && measuredHeight > 0
+    ? Math.max(1, Math.ceil((measuredHeight - 0.5) / DASHBOARD_ROW_HEIGHT))
+    : 1;
+  return { width: measuredWidthToGridColumns(measuredWidth, boardWidth), height };
 }
 
 export function centeredGridSpan(span: number, columns = DASHBOARD_COLUMNS): number {
@@ -56,21 +64,23 @@ export function firstFreePosition(
   throw new Error('DESKTOP_POSITION_EXHAUSTED');
 }
 
-export function resolveDesktopItems(config: AppConfig, widthOverrides: SystemWidgetWidthOverrides = {}): DesktopItem[] {
+export function resolveDesktopItems(config: AppConfig, footprintOverrides: SystemWidgetFootprintOverrides = {}): DesktopItem[] {
   const widgets: DesktopItem[] = [];
   const occupied: WidgetPosition[] = [];
   for (const item of resolveWidgetLayout(config.appearance.widgetLayout.value).filter((item) => item.enabled)) {
     const id = item.id as SystemWidgetId;
     const centered = isHorizontallyCentered(item.position);
-    const minimumWidth = widthOverrides[id] ? clamp(widthOverrides[id]!, 1, DASHBOARD_COLUMNS) : undefined;
+    const override = footprintOverrides[id];
+    const minimumWidth = override?.width ? clamp(override.width, 1, DASHBOARD_COLUMNS) : undefined;
     const measuredWidth = minimumWidth && centered ? centeredGridSpan(minimumWidth) : minimumWidth;
-    const candidate = measuredWidth
+    const candidate = measuredWidth || override?.height
       ? {
           ...item.position,
-          width: measuredWidth,
-          column: centered
+          width: measuredWidth ?? item.position.width,
+          height: Math.max(item.position.height, override?.height ?? item.position.height),
+          column: centered && measuredWidth
             ? Math.round((DASHBOARD_COLUMNS - measuredWidth) / 2)
-            : clamp(item.position.column, 0, DASHBOARD_COLUMNS - measuredWidth),
+            : clamp(item.position.column, 0, DASHBOARD_COLUMNS - (measuredWidth ?? item.position.width)),
         }
       : item.position;
     const position = occupied.some((placed) => overlaps(candidate, placed))

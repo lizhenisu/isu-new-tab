@@ -16,6 +16,9 @@ export function WallpaperSettings() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
   const [onlineSource, setOnlineSource] = useState<'wallhaven' | 'unsplash'>('wallhaven');
+  const solidColor = wallpaper.type === 'solid' ? wallpaper.color : DEFAULT_SOLID_WALLPAPER_COLOR;
+
+  const selectSolidWallpaper = () => setWallpaper({ type: 'solid', color: solidColor });
 
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -35,7 +38,28 @@ export function WallpaperSettings() {
     <section>
       <h3>{t('wallpaper')}</h3>
       <div className="wallpaperChoices">
-        <label className={`colorChoice ${wallpaper.type === 'solid' ? 'active' : ''}`}>{t('solid')}<input type="color" value={wallpaper.type === 'solid' ? wallpaper.color : DEFAULT_SOLID_WALLPAPER_COLOR} onChange={(event) => setWallpaper({ type: 'solid', color: event.target.value })} /></label>
+        <div
+          className={`colorChoice ${wallpaper.type === 'solid' ? 'active' : ''}`}
+          role="button"
+          tabIndex={0}
+          aria-pressed={wallpaper.type === 'solid'}
+          onClick={selectSolidWallpaper}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+            event.preventDefault();
+            selectSolidWallpaper();
+          }}
+        >
+          <span>{t('solid')}</span>
+          <input
+            type="color"
+            aria-label={t('solid')}
+            value={solidColor}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+            onChange={(event) => setWallpaper({ type: 'solid', color: event.target.value })}
+          />
+        </div>
         {['aurora', 'dusk', 'ocean'].map((assetId) => <button key={assetId} type="button" aria-pressed={wallpaper.type === 'builtin' && wallpaper.assetId === assetId} className={`builtinPreview ${assetId} ${wallpaper.type === 'builtin' && wallpaper.assetId === assetId ? 'active' : ''}`} onClick={() => setWallpaper({ type: 'builtin', assetId })}>{t(assetId)}</button>)}
         <button type="button" className={`secondary wallpaperUploadChoice ${wallpaper.type === 'upload' ? 'active' : ''}`} aria-pressed={wallpaper.type === 'upload'} onClick={() => fileInput.current?.click()}>{t('upload')}</button>
         <input ref={fileInput} type="file" accept="image/*" hidden onChange={upload} />

@@ -181,12 +181,39 @@ test('places shortcuts at the add tile and supports a single-level desktop folde
   await page.reload();
   const folder = page.locator('.desktopItem--folder').filter({ hasText: 'Work' });
   await expect(folder).toBeVisible();
+  await expect(folder.locator('.folderPreview')).toHaveCSS('border-radius', '25px');
+  await expect(folder.locator('.folderPreview')).toHaveCSS('grid-template-rows', '18px 18px 18px');
+  await expect(folder.locator('.folderPreview > span')).toHaveCSS('height', '18px');
   await expect(page.locator('.desktopItem--shortcut').filter({ hasText: 'Docs' })).toHaveCount(0);
   await folder.locator('.desktopFolder').click();
   const folderDialog = page.getByRole('dialog', { name: 'Work' });
-  await expect(folderDialog.getByText('Docs', { exact: true })).toBeVisible();
-  await folderDialog.getByRole('button', { name: /Move to desktop|移到桌面/, exact: true }).click();
+  await expect(folderDialog.locator('.folderSurface')).toBeVisible();
+  await expect(folderDialog.locator('.folderSurface')).not.toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(folderDialog.getByRole('button', { name: /Close|关闭/, exact: true })).toHaveCount(0);
+  const folderMember = folderDialog.getByRole('link', { name: 'Docs' });
+  await expect(folderMember).toBeVisible();
+  await expect(folderDialog.locator('.folderItemActions')).toHaveCount(0);
+  const memberBox = await folderMember.boundingBox();
+  const surfaceBox = await folderDialog.locator('.folderSurface').boundingBox();
+  if (!memberBox || !surfaceBox) throw new Error('Folder member was not measurable');
+  await page.mouse.move(memberBox.x + memberBox.width / 2, memberBox.y + memberBox.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.move(surfaceBox.x + surfaceBox.width - 24, surfaceBox.y + surfaceBox.height - 24, { steps: 6 });
+  await page.mouse.up();
+  await expect(folderDialog.getByRole('link', { name: 'Docs' })).toBeVisible();
+  await expect(page.locator('.desktopItem--shortcut').filter({ hasText: 'Docs' })).toHaveCount(0);
+
+  const boardBox = await page.locator('.dashboardBoard').boundingBox();
+  const refreshedMemberBox = await folderDialog.getByRole('link', { name: 'Docs' }).boundingBox();
+  if (!boardBox || !refreshedMemberBox) throw new Error('Folder drag target was not measurable');
+  await page.mouse.move(refreshedMemberBox.x + refreshedMemberBox.width / 2, refreshedMemberBox.y + refreshedMemberBox.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.move(boardBox.x + 24, boardBox.y + 24, { steps: 8 });
+  await page.mouse.up();
   await expect(page.locator('.desktopItem--shortcut').filter({ hasText: 'Docs' })).toBeVisible();
+  await expect(folder.locator('.folderPreview.empty')).toBeEmpty();
 });
 
 test('converts an uploaded wallpaper to local WebP without putting it in Chrome Sync', async () => {
@@ -232,8 +259,28 @@ test('converts an uploaded wallpaper to local WebP without putting it in Chrome 
     return { wallpaperType: config.appearance?.wallpaper?.value?.type, blobType: asset?.blob?.type, errors: [...document.querySelectorAll('.errorText')].map((element) => element.textContent) };
   })).toEqual({ wallpaperType: 'upload', blobType: 'image/webp', errors: [] });
 
+  await expect.poll(() => page.evaluate(() => {
+    const preview = JSON.parse(localStorage.getItem('isu:wallpaper-bootstrap-preview') ?? 'null') as { identity?: string; background?: string } | null;
+    return { identity: preview?.identity, isTinyWebp: preview?.background?.startsWith('data:image/webp;base64,') ?? false, bytes: preview?.background?.length ?? 0 };
+  })).toEqual(expect.objectContaining({ identity: 'upload:wallpaper/upload', isTinyWebp: true }));
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('isu:wallpaper-bootstrap-preview')!).background.length)).toBeLessThan(64 * 1024);
+
   const remoteText = await page.evaluate(async () => JSON.stringify(await chrome.storage.sync.get(null)));
   expect(remoteText).not.toContain('wallpaper/upload');
+});
+
+test('paints the saved wallpaper preview before application hydration', async () => {
+  if (!context) throw new Error('Browser context was not created');
+  let serviceWorker = context.serviceWorkers()[0];
+  serviceWorker ??= await context.waitForEvent('serviceworker');
+  const extensionId = new URL(serviceWorker.url()).host;
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/newtab.html`);
+  await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await page.evaluate(() => localStorage.setItem('isu:wallpaper-bootstrap-preview', JSON.stringify({ identity: 'test:preview', background: '#123456' })));
+  await page.reload();
+  await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+  await expect(page.locator('script[src="/wallpaper-bootstrap.js"]')).toHaveCount(1);
 });
 
 test('switches between Chrome Sync and local mode through the background coordinator', async () => {
@@ -249,6 +296,55 @@ test('switches between Chrome Sync and local mode through the background coordin
   await expect.poll(() => readSetting(page, 'syncMode')).toBe('local');
   await mode.selectOption('chrome');
   await expect.poll(() => readSetting(page, 'syncMode')).toBe('chrome');
+});
+
+test('measures arbitrary quote height and preserves note size presets across viewport changes', async () => {
+  if (!context) throw new Error('Browser context was not created');
+  let serviceWorker = context.serviceWorkers()[0];
+  serviceWorker ??= await context.waitForEvent('serviceworker');
+  const extensionId = new URL(serviceWorker.url()).host;
+  const longQuote = 'Curiosity gives us the courage to question familiar answers, examine every assumption, listen carefully to unfamiliar perspectives, and keep learning when a simple explanation would be easier. Thoughtful work grows through patience, honest observation, repeated experiments, and the willingness to improve what already appears complete.';
+  const page = await context.newPage();
+  await page.route('https://zenquotes.io/**', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify([{ q: longQuote, a: 'E2E' }]) }));
+  await page.route('https://v1.hitokoto.cn/**', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ uuid: 'long-e2e', hitokoto: longQuote, from: 'E2E', from_who: null }) }));
+  await page.goto(`chrome-extension://${extensionId}/newtab.html`);
+  await expect(page.locator('.dailyQuote blockquote')).toContainText('Curiosity');
+  const quoteWidget = page.locator('[data-widget-id="dailyQuote"]');
+  await expect.poll(() => quoteWidget.evaluate((element) => Number(/span (\d+)/.exec((element as HTMLElement).style.gridRow)?.[1] ?? 0))).toBeGreaterThan(2);
+  const quoteCoverage = await quoteWidget.evaluate((element) => {
+    const section = element.getBoundingClientRect();
+    const content = element.firstElementChild!.getBoundingClientRect();
+    return {
+      horizontal: section.left <= content.left + .5 && section.right >= content.right - .5,
+      vertical: section.top <= content.top + .5 && section.bottom >= content.bottom - .5,
+    };
+  });
+  expect(quoteCoverage).toEqual({ horizontal: true, vertical: true });
+  const overlaps = await page.locator('.dashboardWidget').evaluateAll((elements) => elements.flatMap((element, index) => {
+    const left = element.getBoundingClientRect();
+    return elements.slice(index + 1).filter((candidate) => {
+      const right = candidate.getBoundingClientRect();
+      return left.left < right.right - .5 && left.right > right.left + .5 && left.top < right.bottom - .5 && left.bottom > right.top + .5;
+    }).map((candidate) => `${(element as HTMLElement).dataset.desktopKey}|${(candidate as HTMLElement).dataset.desktopKey}`);
+  }));
+  expect(overlaps).toEqual([]);
+
+  const noteCell = page.locator('[data-widget-id="quickNote"]');
+  await setQuickNotePreset(page, 'small');
+  await expect.poll(() => gridSpan(noteCell, 'gridColumn')).toBe(16);
+  await page.setViewportSize({ width: 600, height: 900 });
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect.poll(() => gridSpan(noteCell, 'gridColumn')).toBe(16);
+  await expect.poll(() => readWidgetSizePreset(page, 'quickNote')).toBe('small');
+
+  const widths: number[] = [];
+  for (const [preset, expectedSpan] of [['small', 16], ['medium', 28], ['large', 36]] as const) {
+    await setQuickNotePreset(page, preset);
+    await expect.poll(() => gridSpan(noteCell, 'gridColumn')).toBe(expectedSpan);
+    widths.push((await noteCell.boundingBox())!.width);
+  }
+  expect(widths[1]!).toBeGreaterThan(widths[0]! + 300);
+  expect(widths[2]!).toBeGreaterThan(widths[1]! + 200);
 });
 
 test('hides, drags, and persists dashboard components on the board', async () => {
@@ -411,6 +507,34 @@ test('customizes the search box and shows local history and online suggestions',
   const background = page.getByLabel(/White background intensity|背景白色强度/, { exact: true });
   await expect(page.getByRole('button', { name: /Local history|本地历史/, exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: /Authorize and enable Chrome history|授权并启用 Chrome 历史/, exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: /Restore default|恢复默认/, exact: true })).toHaveCSS('white-space', 'nowrap');
+  await expect(page.getByRole('button', { name: /Export backup|导出备份/, exact: true })).toHaveCSS('white-space', 'nowrap');
+  await expect(page.getByRole('button', { name: /Import backup|导入备份/, exact: true })).toHaveCSS('white-space', 'nowrap');
+  const solidChoice = page.locator('.colorChoice');
+  const colorClickCount = await solidChoice.evaluate((element) => {
+    const input = element.querySelector('input')!;
+    let clicks = 0;
+    input.addEventListener('click', () => { clicks += 1; });
+    (element.querySelector('span') as HTMLElement).click();
+    return clicks;
+  });
+  expect(colorClickCount).toBe(0);
+  const presetButtons = [
+    page.getByRole('button', { name: /Aurora|极光/, exact: true }),
+    page.getByRole('button', { name: /Dusk|暮色/, exact: true }),
+    page.getByRole('button', { name: /Ocean|海洋/, exact: true }),
+  ];
+  const presetBackgrounds = await Promise.all(presetButtons.map((button) => button.evaluate((element) => getComputedStyle(element).backgroundImage)));
+  expect(new Set(presetBackgrounds).size).toBe(3);
+  for (const preset of presetButtons) {
+    await preset.hover();
+    await expect(preset).not.toHaveCSS('background-color', 'rgb(248, 250, 253)');
+    await expect(preset).toHaveCSS('background-image', /gradient/);
+  }
+  await presetButtons[1]!.click();
+  await expect(solidChoice).not.toHaveClass(/active/);
+  await solidChoice.locator('span').click();
+  await expect(solidChoice).toHaveClass(/active/);
   const solidWallpaper = page.locator('.colorChoice input[type="color"]');
   await solidWallpaper.evaluate((input: HTMLInputElement) => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '#ffffff');
@@ -536,4 +660,47 @@ async function readWidgetColumn(page: import('@playwright/test').Page, widgetId:
       request.onerror = () => reject(request.error);
     });
   }, widgetId);
+}
+
+async function setQuickNotePreset(page: import('@playwright/test').Page, preset: 'small' | 'medium' | 'large'): Promise<void> {
+  await page.evaluate(async (nextPreset) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('isu-new-tab');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('config', 'readwrite');
+      const store = transaction.objectStore('config');
+      const request = store.get('current');
+      request.onsuccess = () => {
+        const config = request.result;
+        const item = config.appearance.widgetLayout.value.find((candidate: { id: string }) => candidate.id === 'quickNote');
+        item.sizePreset = nextPreset;
+        store.put(config, 'current');
+      };
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }, preset);
+  await page.reload();
+}
+
+async function readWidgetSizePreset(page: import('@playwright/test').Page, widgetId: string): Promise<string | undefined> {
+  return page.evaluate(async (id) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('isu-new-tab');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    return new Promise<string | undefined>((resolve, reject) => {
+      const request = database.transaction('config').objectStore('config').get('current');
+      request.onsuccess = () => resolve(request.result.appearance.widgetLayout.value.find((item: { id: string }) => item.id === id)?.sizePreset);
+      request.onerror = () => reject(request.error);
+    });
+  }, widgetId);
+}
+
+async function gridSpan(locator: import('@playwright/test').Locator, property: 'gridColumn' | 'gridRow'): Promise<number> {
+  return locator.evaluate((element, name) => Number(/span (\d+)/.exec((element as HTMLElement).style[name])?.[1] ?? 0), property);
 }

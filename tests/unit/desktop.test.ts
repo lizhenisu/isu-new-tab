@@ -3,6 +3,7 @@ import { createInitialConfig } from '../../core/domain/defaults';
 import {
   centeredGridSpan,
   desktopPlacements,
+  measuredSizeToGridFootprint,
   measuredWidthToGridColumns,
   migrateDesktopPositions,
   overlaps,
@@ -18,7 +19,7 @@ const position = (column: number, row = 20) => ({ column, row, width: 4 as const
 describe('unified desktop layout', () => {
   it('keeps the default search placement centered at its rendered width', () => {
     const config = createInitialConfig({ deviceId: 'test', counter: 0, epoch: 0 });
-    const search = resolveDesktopItems(config, { search: 39 }).find((item) => item.kind === 'system-widget' && item.id === 'search');
+    const search = resolveDesktopItems(config, { search: { width: 39, height: 2 } }).find((item) => item.kind === 'system-widget' && item.id === 'search');
 
     expect(search?.position).toMatchObject({ column: 4, width: 40 });
   });
@@ -29,6 +30,34 @@ describe('unified desktop layout', () => {
     expect(measuredWidthToGridColumns(312, 1_548)).toBe(10);
     expect(measuredWidthToGridColumns(619, 1_548)).toBe(20);
     expect(measuredWidthToGridColumns(2_000, 1_548)).toBe(48);
+  });
+
+  it('rounds arbitrary measured content height up to complete collision rows', () => {
+    expect(measuredSizeToGridFootprint(619, 39, 1_548)).toEqual({ width: 20, height: 1 });
+    expect(measuredSizeToGridFootprint(619, 201, 1_548)).toEqual({ width: 20, height: 6 });
+  });
+
+  it('keeps a stretching widget preset width while allowing only required height growth', () => {
+    const config = createInitialConfig({ deviceId: 'test', counter: 0, epoch: 0 });
+    const layout = config.appearance.widgetLayout.value;
+    const note = layout.find((item) => item.id === 'quickNote');
+    if (!note) throw new Error('Missing quick note layout');
+
+    for (const [preset, expectedWidth, expectedHeight] of [
+      ['small', 16, 4],
+      ['medium', 28, 6],
+      ['large', 36, 8],
+    ] as const) {
+      note.sizePreset = preset;
+      const resolved = resolveDesktopItems(config, { quickNote: { height: 1 } })
+        .find((item) => item.kind === 'system-widget' && item.id === 'quickNote');
+      expect(resolved?.position).toMatchObject({ width: expectedWidth, height: expectedHeight });
+    }
+
+    note.sizePreset = 'small';
+    const grown = resolveDesktopItems(config, { quickNote: { height: 7 } })
+      .find((item) => item.kind === 'system-widget' && item.id === 'quickNote');
+    expect(grown?.position).toMatchObject({ width: 16, height: 7 });
   });
 
   it('adds the minimum parity column required for exact integer-grid centering', () => {

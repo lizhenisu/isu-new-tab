@@ -14,10 +14,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { isDesktopContextActionAllowed, type DesktopContextAction, type DesktopContextTarget } from '../../../core/browser/native-context-menu';
 import { t } from '../../../core/browser/i18n';
 import { observeElementSize } from '../../../core/browser/observe-element-size';
+import { measureElementSize, type MeasuredElementSize } from '../../../core/browser/measure-element-size';
 import {
   centeredGridSpan,
   desktopPlacements,
-  measuredWidthToGridColumns,
+  measuredSizeToGridFootprint,
   overlaps,
   reflowDesktopItems,
   resolveDesktopItems,
@@ -54,13 +55,14 @@ const candidateKey = (candidate: DragCandidate | undefined) => candidate
 
 export function DashboardBoard({ layout: storedLayout, context, onPlacementsChange, onLayoutChange }: Props) {
   const [boardWidth, setBoardWidth] = useState(0);
-  const [measuredWidgetWidths, setMeasuredWidgetWidths] = useState<Partial<Record<SystemWidgetId, number>>>({});
-  const widthOverrides = useMemo<Partial<Record<SystemWidgetId, number>>>(() => Object.fromEntries(
-    Object.entries(measuredWidgetWidths).map(([id, width]) => [id, measuredWidthToGridColumns(width, boardWidth)]),
-  ), [boardWidth, measuredWidgetWidths]);
+  const [measuredWidgetSizes, setMeasuredWidgetSizes] = useState<Partial<Record<SystemWidgetId, MeasuredElementSize>>>({});
+  const footprintOverrides = useMemo(() => Object.fromEntries(Object.entries(measuredWidgetSizes).map(([id, size]) => {
+    const footprint = measuredSizeToGridFootprint(size.width, size.height, boardWidth);
+    return [id, { ...(!size.stretchesContainerWidth ? { width: footprint.width } : {}), height: footprint.height }];
+  })), [boardWidth, measuredWidgetSizes]);
   const resolved = useMemo(
-    () => resolveDesktopItems({ ...context.config, appearance: { ...context.config.appearance, widgetLayout: { ...context.config.appearance.widgetLayout, value: storedLayout } } }, widthOverrides),
-    [context.config, storedLayout, widthOverrides],
+    () => resolveDesktopItems({ ...context.config, appearance: { ...context.config.appearance, widgetLayout: { ...context.config.appearance.widgetLayout, value: storedLayout } } }, footprintOverrides),
+    [context.config, storedLayout, footprintOverrides],
   );
   const [items, setItems] = useState(resolved);
   const [preview, setPreview] = useState<DesktopItem[]>();
@@ -77,8 +79,16 @@ export function DashboardBoard({ layout: storedLayout, context, onPlacementsChan
   const acceptedFolderRef = useRef<string | undefined>(undefined);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 500, tolerance: 6 } }));
   const { blockClicks, blockNextClick } = useDragClickGuard();
-  const recordWidgetWidth = useCallback((id: SystemWidgetId, width: number) => {
-    setMeasuredWidgetWidths((current) => Math.abs((current[id] ?? 0) - width) < 0.5 ? current : { ...current, [id]: width });
+  const recordWidgetSize = useCallback((id: SystemWidgetId, size: MeasuredElementSize) => {
+    setMeasuredWidgetSizes((current) => {
+      const previous = current[id];
+      return previous
+        && Math.abs(previous.width - size.width) < 0.5
+        && Math.abs(previous.height - size.height) < 0.5
+        && previous.stretchesContainerWidth === size.stretchesContainerWidth
+        ? current
+        : { ...current, [id]: size };
+    });
   }, []);
 
   useEffect(() => setItems(resolved), [resolved]);
@@ -267,25 +277,24 @@ export function DashboardBoard({ layout: storedLayout, context, onPlacementsChan
           return (
             <DesktopCell key={item.key} item={item} context={context} displaced={displaced}
               folderAccepted={item.kind === 'folder' && acceptedFolderId === item.entity.id}
-              onWidgetWidth={recordWidgetWidth}
+              onWidgetSize={recordWidgetSize}
               onAdd={() => context.onAddShortcut()} onOpenFolder={setOpenFolderId} />
           );
         })}
       </div>
       {folder && <FolderDialog folder={folder} shortcuts={context.config.shortcuts.filter((item) => item.groupId === folder.id)}
-        onClose={() => setOpenFolderId(undefined)} onEdit={context.onEditShortcut} onDelete={context.onDeleteShortcut}
-        onMove={context.onMoveShortcut} boardPositionAt={boardPositionAt}
+        onClose={() => setOpenFolderId(undefined)} onMove={context.onMoveShortcut} boardPositionAt={boardPositionAt}
         onMoveToDesktop={(id, position) => context.onMoveShortcut(id, 'default', undefined, undefined, position)} />}
     </DndContext>
   );
 }
 
-function DesktopCell({ item, context, displaced, folderAccepted, onWidgetWidth, onAdd, onOpenFolder }: {
+function DesktopCell({ item, context, displaced, folderAccepted, onWidgetSize, onAdd, onOpenFolder }: {
   item: DesktopItem;
   context: DashboardWidgetContext;
   displaced: boolean;
   folderAccepted: boolean;
-  onWidgetWidth(id: SystemWidgetId, width: number): void;
+  onWidgetSize(id: SystemWidgetId, size: MeasuredElementSize): void;
   onAdd(): void;
   onOpenFolder(id: string): void;
 }) {
@@ -309,9 +318,9 @@ function DesktopCell({ item, context, displaced, folderAccepted, onWidgetWidth, 
     if (!widgetId) return;
     const content = nodeRef.current?.firstElementChild;
     if (!(content instanceof HTMLElement)) return;
-    const measure = () => onWidgetWidth(widgetId, content.getBoundingClientRect().width);
+    const measure = () => onWidgetSize(widgetId, measureElementSize(content, nodeRef.current ?? undefined));
     return observeElementSize(content, measure);
-  }, [onWidgetWidth, widgetId]);
+  }, [onWidgetSize, widgetId]);
   const content: ReactNode = item.kind === 'system-widget'
     ? WIDGET_REGISTRY[item.id].render(context)
     : item.kind === 'shortcut'
@@ -342,7 +351,9 @@ function DesktopIcon({ name, url }: { name: string; url: string }) {
 
 function FolderTile({ item, onOpen, active }: { item: Extract<DesktopItem, { kind: 'folder' }>; onOpen(): void; active: boolean }) {
   return <button type="button" className={`desktopFolder ${active ? 'active' : ''}`} onClick={onOpen}>
-    <span className="folderPreview">{item.children.slice(0, 9).map((shortcut) => <span key={shortcut.id}><img src={faviconUrl(shortcut.url)} alt="" /></span>)}</span>
+    <span className={`folderPreview ${item.children.length ? '' : 'empty'}`}>
+      {item.children.slice(0, 9).map((shortcut) => <span key={shortcut.id}><img src={faviconUrl(shortcut.url)} alt="" /></span>)}
+    </span>
     <strong>{item.entity.name}</strong>
   </button>;
 }

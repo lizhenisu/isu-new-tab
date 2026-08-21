@@ -3,6 +3,7 @@ import { t } from '../../core/browser/i18n';
 import { DEFAULT_GROUP_ID, type Shortcut, type ShortcutGroup } from '../../core/domain/types';
 import { DEFAULT_SOLID_WALLPAPER_COLOR } from '../../core/domain/defaults';
 import { wallpaperTone } from '../../core/domain/wallpaper-tone';
+import { createWallpaperBootstrapThumbnail, getWallpaperBootstrapPreview, setWallpaperBootstrapPreview } from '../../core/wallpaper/bootstrap-preview';
 import type { WidgetPosition } from '../../core/domain/widgets';
 import { appRepositories } from '../../core/storage/repository';
 import { useAppStore } from '../../core/state/store';
@@ -78,34 +79,51 @@ export function App() {
 
 function useWallpaperBackground(wallpaper?: NonNullable<ReturnType<typeof useAppStore.getState>['config']>['appearance']['wallpaper']['value']): string {
   const [localUrl, setLocalUrl] = useState<string>();
+  const [bootstrapPreview] = useState(getWallpaperBootstrapPreview);
   const localAsset = wallpaper?.type === 'upload'
     ? { key: wallpaper.assetKey, identity: `upload:${wallpaper.assetKey}` }
     : wallpaper?.type === 'wallhaven'
       ? { key: 'wallpaper/wallhaven-current', identity: `wallhaven:${wallpaper.imageUrl}` }
       : undefined;
   useEffect(() => {
+    let active = true;
     let currentUrl: string | undefined;
     if (localAsset) appRepositories.assets.getAsset(localAsset.key).then((blob) => {
-      if (!blob) return;
+      if (!blob || !active) return;
       currentUrl = URL.createObjectURL(blob);
       setLocalUrl(`url("${currentUrl}")`);
+      if (bootstrapPreview?.identity !== localAsset.identity) {
+        void createWallpaperBootstrapThumbnail(blob).then((background) => {
+          if (active) setWallpaperBootstrapPreview({ identity: localAsset.identity, background });
+        }).catch(() => undefined);
+      }
     });
     else setLocalUrl(undefined);
-    return () => { if (currentUrl) URL.revokeObjectURL(currentUrl); };
-  }, [localAsset?.identity]);
+    return () => { active = false; if (currentUrl) URL.revokeObjectURL(currentUrl); };
+  }, [bootstrapPreview?.identity, localAsset?.identity]);
+  useEffect(() => {
+    if (!wallpaper) return;
+    if (wallpaper.type === 'solid') setWallpaperBootstrapPreview({ identity: `solid:${wallpaper.color}`, background: wallpaper.color });
+    else if (wallpaper.type === 'builtin') setWallpaperBootstrapPreview({ identity: `builtin:${wallpaper.assetId}`, background: builtinWallpapers[wallpaper.assetId as keyof typeof builtinWallpapers] ?? builtinWallpapers.aurora });
+    else if (wallpaper.type === 'unsplash') setWallpaperBootstrapPreview({ identity: `unsplash:${wallpaper.imageUrl}`, background: `url("${wallpaper.imageUrl}")` });
+  }, [wallpaper]);
   return useMemo(() => {
-    if (!wallpaper) return DEFAULT_SOLID_WALLPAPER_COLOR;
+    if (!wallpaper) return bootstrapPreview?.background ?? DEFAULT_SOLID_WALLPAPER_COLOR;
     if (wallpaper.type === 'solid') return wallpaper.color;
-    if (wallpaper.type === 'upload' || wallpaper.type === 'wallhaven') return localUrl ?? DEFAULT_SOLID_WALLPAPER_COLOR;
+    if (wallpaper.type === 'upload' || wallpaper.type === 'wallhaven') {
+      const identity = wallpaper.type === 'upload' ? `upload:${wallpaper.assetKey}` : `wallhaven:${wallpaper.imageUrl}`;
+      return localUrl ?? (bootstrapPreview?.identity === identity ? bootstrapPreview.background : DEFAULT_SOLID_WALLPAPER_COLOR);
+    }
     if (wallpaper.type === 'unsplash') return `url("${wallpaper.imageUrl}")`;
-    const gradients = {
-      aurora: 'radial-gradient(circle at 15% 20%, #48d7a9 0, transparent 35%), radial-gradient(circle at 80% 30%, #605be9 0, transparent 38%), #111a34',
-      dusk: 'linear-gradient(135deg, #4c1d4f, #c8555b 48%, #f5b56b)',
-      ocean: 'linear-gradient(145deg, #061d33, #0c7690 55%, #61c0bf)',
-    };
-    return gradients[wallpaper.assetId as keyof typeof gradients] ?? gradients.aurora;
-  }, [localUrl, wallpaper]);
+    return builtinWallpapers[wallpaper.assetId as keyof typeof builtinWallpapers] ?? builtinWallpapers.aurora;
+  }, [bootstrapPreview, localUrl, wallpaper]);
 }
+
+const builtinWallpapers = {
+  aurora: 'radial-gradient(circle at 15% 20%, #48d7a9 0, transparent 35%), radial-gradient(circle at 80% 30%, #605be9 0, transparent 38%), #111a34',
+  dusk: 'linear-gradient(135deg, #4c1d4f, #c8555b 48%, #f5b56b)',
+  ocean: 'linear-gradient(145deg, #061d33, #0c7690 55%, #61c0bf)',
+};
 
 function UnsplashAttribution({ wallpaper }: { wallpaper: Extract<NonNullable<ReturnType<typeof useAppStore.getState>['config']>['appearance']['wallpaper']['value'], { type: 'unsplash' }> }) {
   return <footer className="photoAttribution">{t('photoBy')} <a href={wallpaper.photographerUrl} target="_blank" rel="noreferrer">{wallpaper.photographerName}</a> / <a href={wallpaper.sourceUrl} target="_blank" rel="noreferrer">Unsplash</a></footer>;

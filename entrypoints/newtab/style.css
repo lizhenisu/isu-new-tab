@@ -24,7 +24,7 @@ button { cursor: pointer; }
   --secondary: rgba(255,255,255,.12);
   min-height: 100vh;
   color: var(--text);
-  background: #142536;
+  background: transparent;
   position: relative;
   overflow-x: hidden;
 }
@@ -433,7 +433,7 @@ select option { color: #172033; }
 .syncStatus p { margin: 0; }
 .conflictBox { display: grid; gap: 8px; margin-top: 8px; padding: 10px; border: 1px solid rgba(255,156,156,.4); border-radius: 10px; }
 .conflictBox div { display: flex; flex-wrap: wrap; gap: 6px; }
-.loading { min-height: 100vh; display: grid; place-items: center; background: #172033; color: #fff; }
+.loading { min-height: 100vh; display: grid; place-items: center; color: #5f6368; background: transparent; }
 @media (max-width: 640px) {
   .content { width: min(100% - 22px, 700px); padding-top: 34px; }
   .dashboardBoard { display: flex; flex-direction: column; gap: 18px; min-height: 0 !important; }

@@ -5,17 +5,18 @@ type ModalProps = PropsWithChildren<{
   title: string;
   onClose(): void;
   variant?: 'center' | 'drawer' | 'editor';
+  showCloseButton?: boolean;
 }>;
 
-export function Modal({ title, onClose, children, variant = 'center' }: ModalProps) {
+export function Modal({ title, onClose, children, variant = 'center', showCloseButton = true }: ModalProps) {
   return (
     <div className={`modalBackdrop modalBackdrop--${variant}`} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={`modal modal--${variant}`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modalHeader">
           <h2>{title}</h2>
-          <button className="iconButton" type="button" onClick={onClose} aria-label={t('close')}>
+          {showCloseButton && <button className="iconButton" type="button" onClick={onClose} aria-label={t('close')}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
-          </button>
+          </button>}
         </header>
         {children}
       </section>

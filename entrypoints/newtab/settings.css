@@ -156,6 +156,7 @@
   font-size: 13px;
   font-weight: 600;
   box-shadow: none;
+  white-space: nowrap;
 }
 .modal--drawer button:not(.iconButton):hover { border-color: #d2e3fc; background: #f8fafd; }
 .modal--drawer button:not(.iconButton):focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
@@ -179,12 +180,16 @@
   border: 2px solid transparent;
   border-radius: 12px;
 }
-.modal--drawer .colorChoice { display: grid; grid-template-columns: 1fr 42px; align-items: center; padding: 10px 12px; color: #3c4043; background: #f8fafd; }
+.modal--drawer .colorChoice { display: grid; grid-template-columns: 1fr 42px; align-items: center; padding: 10px 12px; color: #3c4043; background: #f8fafd; cursor: pointer; }
+.modal--drawer .colorChoice:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
 .modal--drawer .colorChoice input[type="color"] { width: 38px; height: 38px; padding: 3px; border: 1px solid #dadce0; border-radius: 50%; background: #fff; box-shadow: none; cursor: pointer; }
 .modal--drawer .builtinPreview { color: #fff; font-weight: 600; text-shadow: 0 1px 4px rgba(0,0,0,.55); }
-.modal--drawer .builtinPreview.aurora { background: linear-gradient(135deg,#49cba2,#5550c9); }
+.modal--drawer .builtinPreview.aurora { background: radial-gradient(circle at 24% 22%, #8ef0c5 0 8%, transparent 28%), linear-gradient(140deg,#173d59 4%,#247f72 47%,#725bd5); }
 .modal--drawer .builtinPreview.dusk { background: linear-gradient(135deg,#6d275f,#e8906e); }
-.modal--drawer .builtinPreview.ocean { background: linear-gradient(135deg,#07496a,#61c0bf); }
+.modal--drawer .builtinPreview.ocean { background: linear-gradient(150deg,#031d3d 0%,#086d99 52%,#69d5d0 100%); }
+.modal--drawer .builtinPreview.aurora:hover { background: radial-gradient(circle at 24% 22%, #8ef0c5 0 8%, transparent 28%), linear-gradient(140deg,#173d59 4%,#247f72 47%,#725bd5); }
+.modal--drawer .builtinPreview.dusk:hover { background: linear-gradient(135deg,#6d275f,#e8906e); }
+.modal--drawer .builtinPreview.ocean:hover { background: linear-gradient(150deg,#031d3d 0%,#086d99 52%,#69d5d0 100%); }
 .modal--drawer .wallpaperUploadChoice { color: #3c4043; background: #f8fafd; }
 .modal--drawer .colorChoice.active,
 .modal--drawer .builtinPreview.active,
