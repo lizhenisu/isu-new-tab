@@ -73,7 +73,7 @@ export function targetFromPointer(event: Pick<PointerEvent, 'target' | 'clientX'
   if (!item) return { kind: 'board', position: boardPosition(board, event.clientX, event.clientY) };
   if (item.kind === 'system-widget') return { kind: 'system-widget', key: item.key, widgetId: item.id, sizePreset: item.sizePreset };
   if (item.kind === 'shortcut') return { kind: 'shortcut', key: item.key };
-  if (item.kind === 'folder') return { kind: 'folder', key: item.key };
+  if (item.kind === 'folder') return { kind: 'folder', key: item.key, empty: item.children.length === 0 };
   return { kind: 'add-shortcut', key: 'add-shortcut' };
 }
 

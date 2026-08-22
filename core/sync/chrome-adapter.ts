@@ -20,7 +20,7 @@ export interface SyncStorageArea {
 }
 
 type BucketPayload = {
-  kind: 'settings' | 'groups' | 'shortcuts' | 'tombstones';
+  kind: 'settings' | 'groups' | 'shortcuts' | 'pieces' | 'tombstones';
   items: unknown[];
 };
 
@@ -288,6 +288,7 @@ async function buildBucketWrites(envelope: SyncEnvelope): Promise<{
     settings,
     ...await partition('groups', envelope.config.groups),
     ...await partition('shortcuts', envelope.config.shortcuts),
+    ...await partition('pieces', envelope.pieces ?? [], (item) => `${(item as { id: string }).id}`),
     ...await partition('tombstones', envelope.metadata.tombstones, (item) => `${item.entityType}/${item.entityId}`),
   ];
   const values: StorageValues = {};
@@ -356,12 +357,15 @@ function assembleEnvelope(payloads: BucketPayload[], manifest: Manifest): SyncEn
       groups: items('groups') as SyncEnvelope['config']['groups'],
       shortcuts: items('shortcuts') as SyncEnvelope['config']['shortcuts'],
     },
+    pieces: items('pieces') as SyncEnvelope['pieces'],
     metadata: { tombstones: items('tombstones') as SyncEnvelope['metadata']['tombstones'] },
   };
 }
 
 function normalizeEnvelope(envelope: SyncEnvelope): SyncEnvelope {
   const normalized = structuredClone(envelope);
+  normalized.pieces ??= [];
+  normalized.pieces.sort((left, right) => left.id.localeCompare(right.id));
   normalized.config.groups.sort(compareBySortKey);
   normalized.config.shortcuts.sort(compareBySortKey);
   normalized.metadata.tombstones.sort((left, right) =>

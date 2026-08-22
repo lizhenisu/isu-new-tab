@@ -1,13 +1,16 @@
 import { create } from 'zustand';
 import { browser } from 'wxt/browser';
 import type { AppConfig, SearchPreferences, Shortcut, SyncMode, Wallpaper } from '../domain/types';
-import type { DesktopPlacement } from '../domain/desktop';
+import type { DesktopCommit } from '../domain/desktop';
+import type { SystemWidgetId } from '../domain/widgets';
 import type { WidgetPosition } from '../domain/widgets';
+import type { Piece } from '../domain/pieces';
 import { appRepositories } from '../storage/repository';
 import { t } from '../browser/i18n';
 
 type AppState = {
   config: AppConfig | null;
+  pieces: Piece[];
   appearancePreview: { blur?: number; search?: SearchPreferences };
   syncMode: SyncMode;
   loading: boolean;
@@ -20,9 +23,10 @@ type AppState = {
   addShortcut(input: Pick<Shortcut, 'name' | 'url' | 'groupId'> & { position?: WidgetPosition }): Promise<void>;
   updateShortcut(id: string, input: Pick<Shortcut, 'name' | 'url' | 'groupId'>): Promise<void>;
   deleteShortcut(id: string): Promise<void>;
-  moveShortcut(id: string, groupId: string, beforeId?: string, afterId?: string, position?: WidgetPosition): Promise<void>;
+  moveShortcut(id: string, groupId: string, beforeId?: string, afterId?: string, position?: WidgetPosition, commit?: DesktopCommit): Promise<void>;
   moveGroup(id: string, beforeId?: string, afterId?: string): Promise<void>;
-  applyDesktopPlacements(placements: DesktopPlacement[]): Promise<void>;
+  commitDesktopResult(commit: DesktopCommit): Promise<void>;
+  setWidgetEnabled(id: SystemWidgetId, enabled: boolean): Promise<void>;
   updateAppearance<K extends keyof AppConfig['appearance']>(key: K, value: AppConfig['appearance'][K]['value']): Promise<void>;
   previewAppearance<K extends 'blur' | 'search'>(key: K, value: K extends 'blur' ? number : SearchPreferences): void;
   clearAppearancePreview(key: 'blur' | 'search'): void;
@@ -31,7 +35,7 @@ type AppState = {
 };
 
 async function reload(set: (state: Partial<AppState>) => void): Promise<void> {
-  set({ config: await appRepositories.config.getConfig(), syncMode: await appRepositories.sync.getSyncMode(), error: undefined });
+  set({ config: await appRepositories.config.getConfig(), pieces: await appRepositories.pieces.getPieces(), syncMode: await appRepositories.sync.getSyncMode(), error: undefined });
 }
 
 async function scheduleSync(): Promise<void> {
@@ -40,6 +44,7 @@ async function scheduleSync(): Promise<void> {
 
 export const useAppStore = create<AppState>((set) => ({
   config: null,
+  pieces: [],
   appearancePreview: {},
   syncMode: 'chrome',
   loading: true,
@@ -60,9 +65,10 @@ export const useAppStore = create<AppState>((set) => ({
   async addShortcut(input) { await mutate(set, () => appRepositories.config.addShortcut(input)); },
   async updateShortcut(id, input) { await mutate(set, () => appRepositories.config.updateShortcut(id, input)); },
   async deleteShortcut(id) { await mutate(set, () => appRepositories.config.deleteShortcut(id)); },
-  async moveShortcut(id, groupId, beforeId, afterId, position) { await mutate(set, () => appRepositories.config.moveShortcut(id, groupId, beforeId, afterId, position)); },
+  async moveShortcut(id, groupId, beforeId, afterId, position, commit) { await mutate(set, () => appRepositories.config.moveShortcut(id, groupId, beforeId, afterId, position, commit)); },
   async moveGroup(id, beforeId, afterId) { await mutate(set, () => appRepositories.config.moveGroup(id, beforeId, afterId)); },
-  async applyDesktopPlacements(placements) { await mutate(set, () => appRepositories.config.applyDesktopPlacements(placements)); },
+  async commitDesktopResult(commit) { await mutate(set, () => appRepositories.config.commitDesktopResult(commit)); },
+  async setWidgetEnabled(id, enabled) { await mutate(set, () => appRepositories.config.setWidgetEnabled(id, enabled)); },
   async updateAppearance(key, value) { await mutate(set, () => appRepositories.config.updateAppearance(key, value)); },
   previewAppearance(key, value) { set((state) => ({ appearancePreview: { ...state.appearancePreview, [key]: value } })); },
   clearAppearancePreview(key) {
@@ -85,7 +91,12 @@ export const useAppStore = create<AppState>((set) => ({
 }));
 
 async function mutate(set: (state: Partial<AppState>) => void, operation: () => Promise<unknown>): Promise<void> {
-  await operation();
+  try {
+    await operation();
+  } catch (error) {
+    await reload(set);
+    throw error;
+  }
   await reload(set);
   await scheduleSync();
 }

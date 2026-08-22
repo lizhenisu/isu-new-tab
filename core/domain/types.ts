@@ -1,4 +1,5 @@
 import type { WidgetLayout } from './widgets';
+import type { Piece } from './pieces';
 
 export const DEFAULT_GROUP_ID = 'default';
 
@@ -85,7 +86,7 @@ export type SyncMetadata = {
 
 export type OutboxEntry = {
   opId: string;
-  entityType: 'group' | 'shortcut' | 'appearance' | 'envelope';
+  entityType: 'group' | 'shortcut' | 'piece' | 'appearance' | 'envelope';
   entityId: string;
   revision: Revision;
   changeType: 'upsert' | 'delete';
@@ -106,6 +107,7 @@ export type SyncEnvelope = {
   epoch: number;
   revision: Revision;
   config: SyncAppConfig;
+  pieces: Piece[];
   metadata: SyncMetadata;
 };
 
@@ -134,6 +136,7 @@ export type SyncCheckpoint = {
   config: AppConfig;
   metadata: SyncMetadata;
   outbox: OutboxEntry[];
+  pieces?: Piece[];
   cursor?: ProviderCursor;
 };
 

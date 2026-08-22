@@ -46,9 +46,9 @@ export function snapGridCoordinate(value: number, previous?: number, hysteresis 
 const DEFAULT_POSITIONS: Record<WidgetId, WidgetPosition> = {
   clock: { column: 19, row: 0, width: 10, height: 4, gridVersion: 3 },
   greeting: { column: 20, row: 4, width: 8, height: 2, gridVersion: 3 },
-  focusTimer: { column: 14, row: 6, width: 20, height: 6, gridVersion: 3 },
+  focusTimer: { column: 17, row: 6, width: 14, height: 6, gridVersion: 3 },
   search: { column: 14, row: 12, width: 20, height: 2, gridVersion: 3 },
-  quickNote: { column: 10, row: 14, width: 28, height: 6, gridVersion: 3 },
+  quickNote: { column: 10, row: 14, width: 28, height: 7, gridVersion: 3 },
   shortcuts: { column: 16, row: 20, width: 16, height: 4, gridVersion: 3 },
   dailyQuote: { column: 16, row: 24, width: 16, height: 2, gridVersion: 3 },
   addShortcut: { column: 34, row: 24, width: 4, height: 3, gridVersion: 3 },
@@ -57,9 +57,9 @@ const DEFAULT_POSITIONS: Record<WidgetId, WidgetPosition> = {
 export const WIDGET_SIZE_PRESETS: Record<SystemWidgetId, Record<WidgetSizePreset, Pick<WidgetPosition, 'width' | 'height'>>> = {
   clock: { small: { width: 8, height: 3 }, medium: { width: 10, height: 4 }, large: { width: 12, height: 5 } },
   greeting: { small: { width: 6, height: 2 }, medium: { width: 8, height: 2 }, large: { width: 10, height: 3 } },
-  focusTimer: { small: { width: 16, height: 5 }, medium: { width: 20, height: 6 }, large: { width: 24, height: 7 } },
+  focusTimer: { small: { width: 10, height: 5 }, medium: { width: 14, height: 6 }, large: { width: 18, height: 7 } },
   search: { small: { width: 20, height: 2 }, medium: { width: 20, height: 2 }, large: { width: 20, height: 2 } },
-  quickNote: { small: { width: 16, height: 4 }, medium: { width: 28, height: 6 }, large: { width: 36, height: 8 } },
+  quickNote: { small: { width: 16, height: 5 }, medium: { width: 28, height: 7 }, large: { width: 36, height: 9 } },
   dailyQuote: { small: { width: 12, height: 2 }, medium: { width: 16, height: 2 }, large: { width: 20, height: 3 } },
 };
 
@@ -106,35 +106,4 @@ function normalizePosition(position: WidgetPosition | undefined, fallback: Widge
     height: fallback.height,
     gridVersion: 3,
   };
-}
-
-export function placeWidgetWithVerticalReflow(
-  layout: ResolvedWidgetLayoutItem[],
-  id: WidgetId,
-  position: WidgetPosition,
-): ResolvedWidgetLayoutItem[] {
-  const next = layout.map((item) => ({ ...item, position: { ...item.position } }));
-  const target = next.find((item) => item.id === id);
-  if (!target) return next;
-  target.position = { ...position };
-  const queue: WidgetId[] = [id];
-  let operations = 0;
-  while (queue.length && operations < next.length * next.length * 2) {
-    const sourceId = queue.shift()!;
-    const source = next.find((item) => item.id === sourceId)!;
-    for (const item of next) {
-      if (!item.enabled || item.id === id || item.id === sourceId || !positionsOverlap(source.position, item.position)) continue;
-      item.position = { ...item.position, row: source.position.row + source.position.height };
-      queue.push(item.id);
-      operations += 1;
-    }
-  }
-  return next;
-}
-
-export function positionsOverlap(left: WidgetPosition, right: WidgetPosition): boolean {
-  return left.column < right.column + right.width
-    && left.column + left.width > right.column
-    && left.row < right.row + right.height
-    && left.row + left.height > right.row;
 }

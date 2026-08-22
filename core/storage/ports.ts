@@ -11,8 +11,23 @@ import type {
   SyncMode,
   Wallpaper,
 } from '../domain/types';
-import type { DesktopPlacement } from '../domain/desktop';
+import type { DesktopCommit } from '../domain/desktop';
 import type { WidgetPosition } from '../domain/widgets';
+import type { Piece, PiecePosition, PieceSnapshot } from '../domain/pieces';
+
+export interface PieceRepository {
+  getPieces(): Promise<Piece[]>;
+  putPieces(pieces: Piece[]): Promise<void>;
+  createPiece(piece: Piece): Promise<void>;
+  movePiece(id: string, position: PiecePosition): Promise<void>;
+  resizePiece(id: string, position: PiecePosition, sizePreset?: Piece['sizePreset']): Promise<void>;
+  hidePiece(id: string): Promise<void>;
+  restorePiece(id: string): Promise<void>;
+  movePieceIntoFolder(id: string, folderPieceId: string): Promise<void>;
+  movePieceOutOfFolder(id: string, position: PiecePosition): Promise<void>;
+  deletePiece(id: string): Promise<void>;
+  commitPieceLayout(snapshot: PieceSnapshot, pieces: Piece[]): Promise<void>;
+}
 
 export interface ConfigRepository {
   initialize(): Promise<AppConfig>;
@@ -22,10 +37,11 @@ export interface ConfigRepository {
   deleteGroup(id: string): Promise<void>;
   addShortcut(input: Pick<Shortcut, 'name' | 'url' | 'groupId'> & { position?: WidgetPosition }): Promise<Shortcut>;
   updateShortcut(id: string, input: Pick<Shortcut, 'name' | 'url' | 'groupId'>): Promise<void>;
-  moveShortcut(id: string, groupId: string, beforeId?: string, afterId?: string, position?: WidgetPosition): Promise<void>;
+  moveShortcut(id: string, groupId: string, beforeId?: string, afterId?: string, position?: WidgetPosition, commit?: DesktopCommit): Promise<void>;
   moveGroup(id: string, beforeId?: string, afterId?: string): Promise<void>;
   deleteShortcut(id: string): Promise<void>;
-  applyDesktopPlacements(placements: DesktopPlacement[]): Promise<void>;
+  commitDesktopResult(commit: DesktopCommit): Promise<void>;
+  setWidgetEnabled(id: import('../domain/widgets').SystemWidgetId, enabled: boolean): Promise<void>;
   updateAppearance<K extends keyof AppConfig['appearance']>(key: K, value: AppConfig['appearance'][K]['value']): Promise<void>;
   setWallpaper(wallpaper: Wallpaper): Promise<void>;
   subscribe(listener: () => void): () => void;
@@ -40,6 +56,7 @@ export interface SyncRepository {
   getSyncMode(): Promise<SyncMode>;
   setSyncMode(mode: SyncMode): Promise<void>;
   getDeviceIdentity(): Promise<DeviceIdentity>;
+  getPieces(): Promise<Piece[]>;
   putCursor(cursor: ProviderCursor): Promise<void>;
   getCursor(providerId: string): Promise<ProviderCursor | undefined>;
   removeOutbox(opIds: string[]): Promise<void>;
@@ -49,7 +66,7 @@ export interface SyncRepository {
     metadata: SyncMetadata,
     identity: DeviceIdentity,
     cursor: ProviderCursor,
-    options?: { pendingRevision?: OutboxEntry['revision']; discardOutbox?: boolean },
+    options?: { pendingRevision?: OutboxEntry['revision']; discardOutbox?: boolean; pieces?: Piece[] },
   ): Promise<void>;
   updateSyncControl(metadata: SyncMetadata, identity: DeviceIdentity, cursor: ProviderCursor): Promise<void>;
   importExternalSync(remote: AppConfig): Promise<void>;
@@ -69,4 +86,4 @@ export interface BackupRepository {
   restoreLatestCheckpoint(): Promise<boolean>;
 }
 
-export type AppUnitOfWork = ConfigRepository & SyncRepository & AssetRepository & BackupRepository;
+export type AppUnitOfWork = ConfigRepository & SyncRepository & AssetRepository & BackupRepository & PieceRepository;

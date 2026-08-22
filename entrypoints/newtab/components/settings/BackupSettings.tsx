@@ -21,7 +21,7 @@ export function BackupSettings() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `isu-new-tab-${new Date().toISOString().slice(0, 10)}.zip`;
+      anchor.download = `isu-newtab-${new Date().toISOString().slice(0, 10)}.zip`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (reason) {

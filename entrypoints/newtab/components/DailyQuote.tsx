@@ -20,8 +20,10 @@ export function DailyQuote({ now }: { now: Date }) {
     return () => { active = false; };
   }, [date, language]);
 
+  const quoteLength = quote?.text.length ?? 0;
+  const density = quoteLength > 90 ? 'compact' : quoteLength > 55 ? 'dense' : 'normal';
   return (
-    <figure className="dailyQuote">
+    <figure className={`dailyQuote dailyQuote--${density}`}>
       <blockquote>{quote?.text ?? t(loading ? 'dailyQuoteLoading' : 'dailyQuoteUnavailable')}</blockquote>
       {quote && <figcaption>
         {quote.author && <span>— {quote.author} · </span>}

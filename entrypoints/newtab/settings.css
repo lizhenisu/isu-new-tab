@@ -164,7 +164,13 @@
 
 .modal--drawer .historySourceChoices { gap: 8px; }
 .modal--drawer .historySourceChoices legend { margin-bottom: 4px; color: #5f6368; font-size: 12px; }
-.modal--drawer .historySourceChoices button { border-radius: 10px; }
+.modal--drawer .historySourceChoices button {
+  min-width: 0;
+  border-radius: 10px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
 .modal--drawer .historySourceChoices button:disabled { border-color: #1a73e8; color: #fff; background: #1a73e8; }
 .modal--drawer .settingsHint { margin-top: -7px; color: #5f6368; font-size: 12px; line-height: 1.55; }
 .modal--drawer .searchHistoryActions { flex-wrap: wrap; }
@@ -230,6 +236,14 @@
 .modal--drawer .conflictBox { border-color: #f6aea9; background: #fff; }
 
 .modal--drawer .backupActions { display: grid !important; }
+.modal--drawer .softwareInfoSettings { gap: 12px !important; }
+.modal--drawer .softwareInfoList { display: grid; gap: 0; margin: 0; border: 1px solid #e0e3e7; border-radius: 12px; overflow: hidden; }
+.modal--drawer .softwareInfoList > div { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 48px; padding: 8px 13px; border-bottom: 1px solid #eef0f2; }
+.modal--drawer .softwareInfoList > div:last-child { border-bottom: 0; }
+.modal--drawer .softwareInfoList dt { color: #5f6368; font-size: 13px; }
+.modal--drawer .softwareInfoList dd { min-width: 0; margin: 0; color: #202124; font-size: 13px; text-align: right; }
+.modal--drawer .softwareInfoList a { overflow-wrap: anywhere; color: #1a73e8; text-decoration: none; }
+.modal--drawer .softwareInfoList a:hover { text-decoration: underline; }
 .modal--drawer .backupActionGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .modal--drawer .backupActionGrid button:first-child { border-color: #1a73e8; color: #fff; background: #1a73e8; }
 .modal--drawer .backupActionGrid button:first-child:hover { border-color: #1765cc; background: #1765cc; }

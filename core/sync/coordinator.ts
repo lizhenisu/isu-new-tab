@@ -106,7 +106,7 @@ export class SyncCoordinator {
       identity.counter = Math.max(identity.counter, remote.revision.counter);
       identity.epoch = remote.epoch;
       const config = applySyncProjection(local, remote.config);
-      await this.repository.replaceFromSync(config, remote.metadata, identity, await cursorFrom(remote, this.adapter.providerId), { discardOutbox: true });
+      await this.repository.replaceFromSync(config, remote.metadata, identity, await cursorFrom(remote, this.adapter.providerId), { discardOutbox: true, pieces: remote.pieces });
       await this.refreshWallpaper(config);
       await this.confirm(remote);
     } else if (choice === 'external-import') {
@@ -132,7 +132,7 @@ export class SyncCoordinator {
     try {
       const localConfig = await this.repository.getConfig();
       const identity = await this.repository.getDeviceIdentity();
-      const localEnvelope = createEnvelope(localConfig, await this.repository.getMetadata(), { counter: identity.counter, deviceId: identity.deviceId }, identity.epoch);
+      const localEnvelope = createEnvelope(localConfig, await this.repository.getMetadata(), { counter: identity.counter, deviceId: identity.deviceId }, identity.epoch, await this.repository.getPieces());
       const remoteMetadata = await this.adapter.getRemoteMetadata();
       if (!remoteMetadata) {
         await this.commitEnvelope(localEnvelope);
@@ -142,21 +142,26 @@ export class SyncCoordinator {
         await this.reportConflict('DATASET_MISMATCH', localEnvelope, await this.adapter.pull());
         return;
       }
-      const cursor = await this.repository.getCursor(this.adapter.providerId);
-      if (!cursor) {
-        await this.reportConflict('BASELINE_MISSING', localEnvelope, await this.adapter.pull());
-        return;
-      }
       if (remoteMetadata.epoch !== identity.epoch) {
-        if (remoteMetadata.epoch < identity.epoch) throw new Error('REMOTE_EPOCH_BEHIND');
+        if (remoteMetadata.epoch < identity.epoch) {
+          // A destructive local piece-model reset intentionally supersedes an
+          // older remote epoch; never let stale data resurrect old positions.
+          await this.commitEnvelope(localEnvelope, true);
+          return;
+        }
         await this.repository.createCheckpoint();
         const remote = await this.requireRemote();
         identity.counter = Math.max(identity.counter, remote.revision.counter);
         identity.epoch = remote.epoch;
         const config = applySyncProjection(localConfig, remote.config);
-        await this.repository.replaceFromSync(config, remote.metadata, identity, await cursorFrom(remote, this.adapter.providerId), { discardOutbox: true });
+        await this.repository.replaceFromSync(config, remote.metadata, identity, await cursorFrom(remote, this.adapter.providerId), { discardOutbox: true, pieces: remote.pieces });
         await this.refreshWallpaper(config);
         await this.confirm(remote);
+        return;
+      }
+      const cursor = await this.repository.getCursor(this.adapter.providerId);
+      if (!cursor) {
+        await this.reportConflict('BASELINE_MISSING', localEnvelope, await this.adapter.pull());
         return;
       }
       const outbox = await this.repository.getOutbox();
@@ -192,7 +197,7 @@ export class SyncCoordinator {
       const merged = mergeThreeWay(base, localEnvelope, remote, identity);
       await this.repository.createCheckpoint();
       const mergedConfig = applySyncProjection(localConfig, merged.config);
-      await this.repository.replaceFromSync(mergedConfig, merged.metadata, identity, await cursorFrom(remote, this.adapter.providerId), { pendingRevision: merged.revision });
+      await this.repository.replaceFromSync(mergedConfig, merged.metadata, identity, await cursorFrom(remote, this.adapter.providerId), { pendingRevision: merged.revision, pieces: merged.pieces });
       await this.refreshWallpaper(mergedConfig);
       await this.commitEnvelope(merged);
     } catch (error) {
@@ -203,7 +208,7 @@ export class SyncCoordinator {
   private async commitLocal(force = false): Promise<void> {
     const config = await this.repository.getConfig();
     const identity = await this.repository.getDeviceIdentity();
-    const envelope = createEnvelope(config, await this.repository.getMetadata(), { counter: identity.counter, deviceId: identity.deviceId }, identity.epoch);
+    const envelope = createEnvelope(config, await this.repository.getMetadata(), { counter: identity.counter, deviceId: identity.deviceId }, identity.epoch, await this.repository.getPieces());
     await this.commitEnvelope(envelope, force);
   }
 

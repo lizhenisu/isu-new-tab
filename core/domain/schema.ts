@@ -1,10 +1,35 @@
 import { z } from 'zod';
 import { createDefaultWidgetLayout, WIDGET_IDS } from './widgets';
 import { DEFAULT_SEARCH_PREFERENCES } from './defaults';
+import { isPiecePositionValid } from './pieces';
 
 export const revisionSchema = z.object({
   counter: z.number().int().nonnegative(),
   deviceId: z.string().min(1),
+});
+
+const piecePositionSchema = z.object({
+  x: z.number().int().min(-24).max(23),
+  y: z.number().int().min(0).max(10000),
+  width: z.number().int().positive().max(48).refine((value) => value % 2 === 0, 'PIECE_WIDTH_MUST_BE_EVEN'),
+  height: z.number().int().positive().max(40),
+}).refine((value) => isPiecePositionValid(value), 'PIECE_OUTSIDE_BOARD');
+const pieceSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(['system-widget', 'shortcut', 'folder', 'add-shortcut']),
+  payloadRef: z.string().min(1),
+  container: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('desktop') }),
+    z.object({ kind: z.literal('folder'), folderPieceId: z.string().min(1) }),
+    z.object({ kind: z.literal('hidden') }),
+  ]),
+  position: piecePositionSchema.optional(),
+  sizePreset: z.enum(['small', 'medium', 'large']).optional(),
+  revision: revisionSchema,
+}).superRefine((piece, context) => {
+  if (piece.container.kind === 'desktop' && !piece.position) context.addIssue({ code: 'custom', message: 'DESKTOP_PIECE_POSITION_REQUIRED', path: ['position'] });
+  if (piece.container.kind === 'folder' && piece.position) context.addIssue({ code: 'custom', message: 'FOLDER_CHILD_POSITION_FORBIDDEN', path: ['position'] });
+  if (piece.kind === 'add-shortcut' && (piece.id !== 'piece:add-shortcut' || piece.container.kind !== 'desktop')) context.addIssue({ code: 'custom', message: 'ADD_SHORTCUT_PIECE_INVALID' });
 });
 
 const versioned = <T extends z.ZodType>(value: T) => z.object({ value, revision: revisionSchema });
@@ -150,6 +175,7 @@ export const syncEnvelopeSchema = z.object({
       search: versioned(searchPreferencesSchema).default(legacySearchPreferences),
     }),
   }),
+  pieces: z.array(pieceSchema).default([]),
   metadata: z.object({
     tombstones: z.array(z.object({
       entityType: z.enum(['group', 'shortcut']),

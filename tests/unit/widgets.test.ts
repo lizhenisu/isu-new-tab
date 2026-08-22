@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialConfig } from '../../core/domain/defaults';
 import { appConfigSchema, syncEnvelopeSchema } from '../../core/domain/schema';
-import { createDefaultWidgetLayout, placeWidgetWithVerticalReflow, resolveWidgetLayout, snapGridCoordinate, SYSTEM_WIDGET_IDS, type ResolvedWidgetLayoutItem } from '../../core/domain/widgets';
+import { createDefaultWidgetLayout, resolveWidgetLayout, snapGridCoordinate, SYSTEM_WIDGET_IDS } from '../../core/domain/widgets';
 import { createEnvelope } from '../../core/sync/engine';
 
 describe('dashboard component layout', () => {
@@ -44,21 +44,6 @@ describe('dashboard component layout', () => {
     expect(layout.find((item) => item.id === 'greeting')?.position.width).toBe(8);
     expect(layout.find((item) => item.id === 'search')?.position.width).toBe(20);
     expect(layout.find((item) => item.id === 'dailyQuote')?.position.width).toBe(16);
-  });
-
-  it('pushes every vertically colliding component down to make room', () => {
-    const position = (row: number) => ({ column: 0, row, width: 8, height: 2, gridVersion: 3 as const });
-    const layout: ResolvedWidgetLayoutItem[] = [
-      { id: 'clock', enabled: true, position: position(0) },
-      { id: 'greeting', enabled: true, position: position(2) },
-      { id: 'search', enabled: true, position: position(4) },
-    ];
-    const placed = placeWidgetWithVerticalReflow(layout, 'clock', position(2));
-    expect(placed.map((item) => [item.id, item.position.row])).toEqual([
-      ['clock', 2],
-      ['greeting', 4],
-      ['search', 6],
-    ]);
   });
 
   it('keeps a snapped coordinate stable around a neighboring-cell boundary', () => {

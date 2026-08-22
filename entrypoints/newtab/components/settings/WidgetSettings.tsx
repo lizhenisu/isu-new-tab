@@ -7,6 +7,7 @@ import { WIDGET_REGISTRY } from '../../widgets/registry';
 export function WidgetSettings() {
   const storedLayout = useAppStore((state) => state.config!.appearance.widgetLayout.value);
   const updateAppearance = useAppStore((state) => state.updateAppearance);
+  const setWidgetEnabled = useAppStore((state) => state.setWidgetEnabled);
   const [layout, setLayout] = useState(() => resolveWidgetLayout(storedLayout));
   useEffect(() => setLayout(resolveWidgetLayout(storedLayout)), [storedLayout]);
 
@@ -17,7 +18,11 @@ export function WidgetSettings() {
     setLayout(resolveWidgetLayout(persisted));
     return updateAppearance('widgetLayout', persisted);
   };
-  const toggle = (id: WidgetId) => save(layout.map((item) => item.id === id ? { ...item, enabled: !item.enabled } : item));
+  const toggle = (id: WidgetId) => {
+    const enabled = !layout.find((item) => item.id === id)?.enabled;
+    setLayout((current) => current.map((item) => item.id === id ? { ...item, enabled } : item));
+    return setWidgetEnabled(id as SystemWidgetId, enabled);
+  };
 
   return (
     <section>

@@ -18,7 +18,7 @@ class MemoryStatusStore implements SyncStatusStore {
 async function resetDatabase() {
   await closeDatabase();
   await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.deleteDatabase('isu-new-tab');
+    const request = indexedDB.deleteDatabase('isu-newtab');
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });

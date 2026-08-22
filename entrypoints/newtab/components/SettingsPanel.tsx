@@ -7,6 +7,7 @@ import { SearchSettings } from './settings/SearchSettings';
 import { WallpaperSettings } from './settings/WallpaperSettings';
 import { WidgetSettings } from './settings/WidgetSettings';
 import { LanguageSettings } from './settings/LanguageSettings';
+import { SoftwareInfoSettings } from './settings/SoftwareInfoSettings';
 import type { AppLanguage, SearchHistorySource } from '../../../core/domain/types';
 
 type Props = {
@@ -28,6 +29,7 @@ export function SettingsPanel({ language, onLanguageChange, searchHistorySource,
         <WallpaperSettings />
         <SyncSettings />
         <BackupSettings />
+        <SoftwareInfoSettings />
       </div>
     </Modal>
   );

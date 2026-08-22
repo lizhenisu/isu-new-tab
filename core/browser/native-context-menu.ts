@@ -33,7 +33,7 @@ export type DesktopContextTarget =
   | { kind: 'none' }
   | { kind: 'board'; position: WidgetPosition }
   | { kind: 'shortcut'; key: string }
-  | { kind: 'folder'; key: string }
+  | { kind: 'folder'; key: string; empty: boolean }
   | { kind: 'system-widget'; key: string; widgetId: SystemWidgetId; sizePreset: WidgetSizePreset }
   | { kind: 'add-shortcut'; key: 'add-shortcut' };
 
@@ -54,7 +54,7 @@ export const ACTION_BY_MENU_ID: Readonly<Record<string, DesktopContextAction>> =
   [CONTEXT_MENU_IDS.sizeLarge]: 'size-large',
 };
 
-export type NativeMenuItemState = { visible: boolean; checked?: boolean };
+export type NativeMenuItemState = { visible: boolean; checked?: boolean; enabled?: boolean };
 
 export function nativeMenuState(target: DesktopContextTarget): Record<string, NativeMenuItemState> {
   const isSystemWidget = target.kind === 'system-widget';
@@ -65,7 +65,7 @@ export function nativeMenuState(target: DesktopContextTarget): Record<string, Na
     [CONTEXT_MENU_IDS.open]: { visible: target.kind === 'folder' },
     [CONTEXT_MENU_IDS.edit]: { visible: target.kind === 'shortcut' },
     [CONTEXT_MENU_IDS.rename]: { visible: target.kind === 'folder' },
-    [CONTEXT_MENU_IDS.delete]: { visible: target.kind === 'shortcut' || target.kind === 'folder' },
+    [CONTEXT_MENU_IDS.delete]: { visible: target.kind === 'shortcut' || target.kind === 'folder', enabled: target.kind !== 'folder' || target.empty },
     [CONTEXT_MENU_IDS.hide]: { visible: isSystemWidget },
     [CONTEXT_MENU_IDS.center]: { visible: target.kind !== 'none' && target.kind !== 'board' },
     [CONTEXT_MENU_IDS.size]: { visible: hasSizes },
@@ -79,7 +79,7 @@ export function isDesktopContextActionAllowed(action: DesktopContextAction, targ
   if (action === 'new-folder') return target.kind === 'board';
   if (action === 'open' || action === 'rename') return target.kind === 'folder';
   if (action === 'edit') return target.kind === 'shortcut';
-  if (action === 'delete') return target.kind === 'shortcut' || target.kind === 'folder';
+  if (action === 'delete') return target.kind === 'shortcut' || (target.kind === 'folder' && target.empty);
   if (action === 'hide') return target.kind === 'system-widget';
   if (action === 'center') return target.kind !== 'none' && target.kind !== 'board';
   return target.kind === 'system-widget' && target.widgetId !== 'search';
@@ -88,5 +88,5 @@ export function isDesktopContextActionAllowed(action: DesktopContextAction, targ
 export function contextTargetSignature(target: DesktopContextTarget): string {
   if (target.kind === 'none' || target.kind === 'board') return target.kind;
   if (target.kind === 'system-widget') return `${target.kind}:${target.key}:${target.sizePreset}`;
-  return `${target.kind}:${target.key}`;
+  return target.kind === 'folder' ? `${target.kind}:${target.key}:${target.empty}` : `${target.kind}:${target.key}`;
 }

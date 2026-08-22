@@ -7,7 +7,7 @@ let context: BrowserContext | undefined;
 let profile: string;
 
 test.beforeEach(async () => {
-  profile = await mkdtemp(path.join(tmpdir(), 'isu-new-tab-'));
+  profile = await mkdtemp(path.join(tmpdir(), 'isu-newtab-'));
   const extensionPath = path.resolve('.output/chrome-mv3');
   context = await chromium.launchPersistentContext(profile, {
     headless: true,
@@ -82,7 +82,7 @@ test('loads the extension, creates a shortcut, and persists it after reload', as
   await expect(page.getByText('OpenAI', { exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -116,10 +116,22 @@ test('places shortcuts at the add tile and supports a single-level desktop folde
   await page.mouse.move(addBox.x + addBox.width / 2, addBox.y + addBox.height / 2 + 120, { steps: 6 });
   await page.mouse.up();
   await expect.poll(() => addTile.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }))).not.toEqual(originalSlot);
+  const firstMovedSlot = await addTile.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }));
+  // Release immediately after the final movement. The release event may be
+  // delivered before React has processed the last drag-move candidate; an
+  // empty target must still be committed instead of reverting to firstMovedSlot.
+  const movedBox = await addTile.boundingBox();
+  if (!movedBox) throw new Error('Moved add shortcut tile was not measurable');
+  await page.mouse.move(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.move(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2 + 61, { steps: 1 });
+  await page.mouse.up();
+  await expect.poll(() => addTile.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }))).not.toEqual(firstMovedSlot);
   const initialSlot = await addTile.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }));
   await expect.poll(() => page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -142,8 +154,8 @@ test('places shortcuts at the add tile and supports a single-level desktop folde
   const shortcut = page.locator('.desktopItem--shortcut').filter({ hasText: 'Docs' });
   await expect(shortcut).toBeVisible();
   await expect(shortcut.getByRole('link')).toHaveAttribute('href', 'https://example.com/docs');
-  await expect.poll(() => shortcut.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }))).not.toEqual(initialSlot);
-  await expect.poll(() => addTile.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }))).toEqual(initialSlot);
+  await expect.poll(() => shortcut.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }))).toEqual(initialSlot);
+  await expect.poll(() => addTile.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }))).not.toEqual(initialSlot);
   await shortcut.scrollIntoViewIfNeeded();
   const shortcutBox = await shortcut.boundingBox();
   if (!shortcutBox) throw new Error('Shortcut was not measurable');
@@ -159,7 +171,7 @@ test('places shortcuts at the add tile and supports a single-level desktop folde
 
   await page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -170,8 +182,21 @@ test('places shortcuts at the add tile and supports a single-level desktop folde
       request.onsuccess = () => {
         const config = request.result;
         const revision = { counter: 500, deviceId: 'e2e' };
-        config.groups.push({ id: 'work', name: 'Work', collapsed: false, sortKey: 'z0', revision, position: { column: 0, row: 30, width: 4, height: 3, gridVersion: 3 } });
-        config.shortcuts.find((item: { name: string }) => item.name === 'Docs').groupId = 'work';
+        const docs = config.shortcuts.find((item: { name: string }) => item.name === 'Docs');
+        const occupied = [
+          ...config.appearance.widgetLayout.value.map((item: { position: object }) => item.position),
+          ...config.shortcuts.filter((item: { position?: object }) => item.position).map((item: { position: object }) => item.position),
+          ...config.groups.filter((item: { position?: object }) => item.position).map((item: { position: object }) => item.position),
+        ] as Array<{ column: number; row: number; width: number; height: number }>;
+        const candidates = Array.from({ length: 12 }, (_, rowOffset) => rowOffset).flatMap((rowOffset) =>
+          Array.from({ length: 45 }, (_, column) => ({ column, row: Math.max(0, docs.position.row + rowOffset - 2), width: 4, height: 3, gridVersion: 3 })),
+        );
+        const position = candidates.find((candidate) => !occupied.some((item) =>
+          candidate.column < item.column + item.width && candidate.column + candidate.width > item.column
+          && candidate.row < item.row + item.height && candidate.row + candidate.height > item.row,
+        ));
+        if (!position) throw new Error('Could not find a nearby folder position');
+        config.groups.push({ id: 'work', name: 'Work', collapsed: false, sortKey: 'z0', revision, position });
         store.put(config, 'current');
       };
       transaction.oncomplete = () => resolve();
@@ -181,10 +206,58 @@ test('places shortcuts at the add tile and supports a single-level desktop folde
   await page.reload();
   const folder = page.locator('.desktopItem--folder').filter({ hasText: 'Work' });
   await expect(folder).toBeVisible();
+  await folder.scrollIntoViewIfNeeded();
+  const desktopShortcut = page.locator('.desktopItem--shortcut').filter({ hasText: 'Docs' });
+  const folderSlot = await folder.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }));
+  const desktopShortcutBox = await desktopShortcut.boundingBox();
+  const folderBox = await folder.boundingBox();
+  const shortcutIconBox = await desktopShortcut.locator('.desktopIcon').boundingBox();
+  const folderPreviewBox = await folder.locator('.folderPreview').boundingBox();
+  if (!desktopShortcutBox || !folderBox || !shortcutIconBox || !folderPreviewBox) throw new Error('Desktop folder drop was not measurable');
+  const pointerStart = { x: desktopShortcutBox.x + desktopShortcutBox.width / 2, y: desktopShortcutBox.y + desktopShortcutBox.height / 2 };
+  const shortcutIconCenter = { x: shortcutIconBox.x + shortcutIconBox.width / 2, y: shortcutIconBox.y + shortcutIconBox.height / 2 };
+  await page.mouse.move(pointerStart.x, pointerStart.y);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.move(
+    pointerStart.x + folderPreviewBox.x + 1 - shortcutIconCenter.x,
+    pointerStart.y + folderPreviewBox.y + folderPreviewBox.height / 2 - shortcutIconCenter.y,
+    { steps: 8 },
+  );
+  await page.waitForTimeout(450);
+  await expect(folder).not.toHaveClass(/isFolderTarget/);
+  await expect(page.locator('.dashboardBoard')).toHaveClass(/reflowPreview/);
+  await expect.poll(() => folder.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }))).not.toEqual(folderSlot);
+  await page.waitForTimeout(520);
+  const shiftedFolderBox = await folder.boundingBox();
+  if (!shiftedFolderBox) throw new Error('Displaced folder was not measurable');
+  await page.mouse.move(
+    shiftedFolderBox.x + shiftedFolderBox.width / 2,
+    shiftedFolderBox.y + shiftedFolderBox.height / 2,
+    { steps: 8 },
+  );
+  await expect(folder).toHaveClass(/isFolderTarget/);
+  await expect.poll(() => folder.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }))).toEqual(folderSlot);
+  await page.mouse.up();
+  await expect(desktopShortcut).toHaveCount(0);
+  await expect.poll(() => page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('isu-newtab');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    return await new Promise<{ groupId?: string; hasPosition: boolean }>((resolve, reject) => {
+      const request = database.transaction('config').objectStore('config').get('current');
+      request.onsuccess = () => {
+        const item = request.result.shortcuts.find((candidate: { name: string }) => candidate.name === 'Docs');
+        resolve({ groupId: item.groupId, hasPosition: Object.hasOwn(item, 'position') });
+      };
+      request.onerror = () => reject(request.error);
+    });
+  })).toEqual({ groupId: 'work', hasPosition: false });
   await expect(folder.locator('.folderPreview')).toHaveCSS('border-radius', '25px');
   await expect(folder.locator('.folderPreview')).toHaveCSS('grid-template-rows', '18px 18px 18px');
   await expect(folder.locator('.folderPreview > span')).toHaveCSS('height', '18px');
-  await expect(page.locator('.desktopItem--shortcut').filter({ hasText: 'Docs' })).toHaveCount(0);
   await folder.locator('.desktopFolder').click();
   const folderDialog = page.getByRole('dialog', { name: 'Work' });
   await expect(folderDialog.locator('.folderSurface')).toBeVisible();
@@ -211,6 +284,7 @@ test('places shortcuts at the add tile and supports a single-level desktop folde
   await page.mouse.down();
   await page.waitForTimeout(650);
   await page.mouse.move(boardBox.x + 24, boardBox.y + 24, { steps: 8 });
+  await page.waitForTimeout(450);
   await page.mouse.up();
   await expect(page.locator('.desktopItem--shortcut').filter({ hasText: 'Docs' })).toBeVisible();
   await expect(folder.locator('.folderPreview.empty')).toBeEmpty();
@@ -241,7 +315,7 @@ test('converts an uploaded wallpaper to local WebP without putting it in Chrome 
 
   await expect.poll(() => page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -277,9 +351,11 @@ test('paints the saved wallpaper preview before application hydration', async ()
   const page = await context.newPage();
   await page.goto(`chrome-extension://${extensionId}/newtab.html`);
   await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  await page.evaluate(() => localStorage.setItem('isu:wallpaper-bootstrap-preview', JSON.stringify({ identity: 'test:preview', background: '#123456' })));
+  await page.addInitScript(() => {
+    localStorage.setItem('isu:wallpaper-bootstrap-preview', JSON.stringify({ identity: 'test:preview', background: '#123456' }));
+  });
   await page.reload();
-  await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+  await expect(page.locator('html')).toHaveAttribute('data-wallpaper-bootstrap', '#123456');
   await expect(page.locator('script[src="/wallpaper-bootstrap.js"]')).toHaveCount(1);
 });
 
@@ -298,19 +374,24 @@ test('switches between Chrome Sync and local mode through the background coordin
   await expect.poll(() => readSetting(page, 'syncMode')).toBe('chrome');
 });
 
-test('measures arbitrary quote height and preserves note size presets across viewport changes', async () => {
+test('keeps logical widget footprints stable across content and viewport changes', async () => {
   if (!context) throw new Error('Browser context was not created');
   let serviceWorker = context.serviceWorkers()[0];
   serviceWorker ??= await context.waitForEvent('serviceworker');
   const extensionId = new URL(serviceWorker.url()).host;
-  const longQuote = 'Curiosity gives us the courage to question familiar answers, examine every assumption, listen carefully to unfamiliar perspectives, and keep learning when a simple explanation would be easier. Thoughtful work grows through patience, honest observation, repeated experiments, and the willingness to improve what already appears complete.';
+  const longQuote = 'Curiosity gives us the courage to question familiar answers, examine every assumption, listen carefully, and keep learning when a simple explanation would be easier. Thoughtful work grows through patience and honest observation—what already appears complete.';
   const page = await context.newPage();
   await page.route('https://zenquotes.io/**', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify([{ q: longQuote, a: 'E2E' }]) }));
   await page.route('https://v1.hitokoto.cn/**', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ uuid: 'long-e2e', hitokoto: longQuote, from: 'E2E', from_who: null }) }));
   await page.goto(`chrome-extension://${extensionId}/newtab.html`);
-  await expect(page.locator('.dailyQuote blockquote')).toContainText('Curiosity');
+  const quote = page.locator('.dailyQuote blockquote');
+  await expect(quote).toContainText('Curiosity');
+  await expect(quote).toContainText('what already appears complete.');
+  await expect(quote).toHaveCSS('white-space', 'normal');
+  await expect(quote).toHaveCSS('text-overflow', 'clip');
+  await expect(quote).toHaveCSS('overflow', 'visible');
   const quoteWidget = page.locator('[data-widget-id="dailyQuote"]');
-  await expect.poll(() => quoteWidget.evaluate((element) => Number(/span (\d+)/.exec((element as HTMLElement).style.gridRow)?.[1] ?? 0))).toBeGreaterThan(2);
+  await expect.poll(() => quoteWidget.evaluate((element) => Number(/span (\d+)/.exec((element as HTMLElement).style.gridRow)?.[1] ?? 0))).toBe(2);
   const quoteCoverage = await quoteWidget.evaluate((element) => {
     const section = element.getBoundingClientRect();
     const content = element.firstElementChild!.getBoundingClientRect();
@@ -320,6 +401,32 @@ test('measures arbitrary quote height and preserves note size presets across vie
     };
   });
   expect(quoteCoverage).toEqual({ horizontal: true, vertical: true });
+  const collisionGrid = await page.locator('.dashboardBoard').evaluate((board) => {
+    const boardRect = board.getBoundingClientRect();
+    const columnWidth = boardRect.width / 48;
+    return [...board.querySelectorAll<HTMLElement>('.dashboardWidget')].map((section) => {
+      const rect = section.getBoundingClientRect();
+      const content = section.firstElementChild?.getBoundingClientRect();
+      const columnSpan = Number(/span (\d+)/.exec(section.style.gridColumn)?.[1] ?? 1);
+      const rowSpan = Number(/span (\d+)/.exec(section.style.gridRow)?.[1] ?? 1);
+      return {
+        key: section.dataset.desktopKey,
+        widthDifference: Math.abs(rect.width - columnWidth * columnSpan),
+        heightDifference: Math.abs(rect.height - 40 * rowSpan),
+        centerDelta: content ? Math.max(Math.abs((rect.left + rect.right) / 2 - (content.left + content.right) / 2), Math.abs((rect.top + rect.bottom) / 2 - (content.top + content.bottom) / 2)) : 0,
+        columnWidth,
+      };
+    });
+  });
+  expect(collisionGrid).toEqual(expect.arrayContaining([
+    expect.objectContaining({ key: 'widget:greeting' }),
+    expect.objectContaining({ key: 'widget:dailyQuote' }),
+  ]));
+  for (const item of collisionGrid) {
+    expect(item.widthDifference, `${item.key} piece width must follow grid`).toBeLessThan(1);
+    expect(item.heightDifference, `${item.key} piece height must follow grid`).toBeLessThan(1);
+    expect(item.centerDelta, `${item.key} content must remain centered`).toBeLessThan(1);
+  }
   const overlaps = await page.locator('.dashboardWidget').evaluateAll((elements) => elements.flatMap((element, index) => {
     const left = element.getBoundingClientRect();
     return elements.slice(index + 1).filter((candidate) => {
@@ -347,6 +454,93 @@ test('measures arbitrary quote height and preserves note size presets across vie
   expect(widths[2]!).toBeGreaterThan(widths[1]! + 200);
 });
 
+test('keeps the add tile fixed when a quote is moved around the clock', async () => {
+  if (!context) throw new Error('Browser context was not created');
+  let serviceWorker = context.serviceWorkers()[0];
+  serviceWorker ??= await context.waitForEvent('serviceworker');
+  const extensionId = new URL(serviceWorker.url()).host;
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/newtab.html`);
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('isu-newtab');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('config', 'readwrite');
+      const store = transaction.objectStore('config');
+      const request = store.get('current');
+      request.onsuccess = () => {
+        const config = request.result;
+        const setPosition = (id: string, position: { column: number; row: number; width: number; height: number }) => {
+          const item = config.appearance.widgetLayout.value.find((candidate: { id: string }) => candidate.id === id);
+          item.position = { ...position, gridVersion: 3 };
+        };
+        setPosition('dailyQuote', { column: 16, row: 8, width: 16, height: 2 });
+        setPosition('clock', { column: 19, row: 0, width: 10, height: 4 });
+        setPosition('addShortcut', { column: 34, row: 0, width: 4, height: 3 });
+        store.put(config, 'current');
+      };
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+  });
+  await page.reload();
+  const quote = page.locator('[data-widget-id="dailyQuote"]');
+  const clock = page.locator('[data-widget-id="clock"]');
+  const addTile = page.locator('[data-desktop-key="add-shortcut"]');
+  const quoteBox = await quote.boundingBox();
+  const clockBox = await clock.boundingBox();
+  if (!quoteBox || !clockBox) throw new Error('Quote and clock were not measurable');
+  const addSlot = await addTile.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }));
+  await page.mouse.move(quoteBox.x + quoteBox.width / 2, quoteBox.y + quoteBox.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.move(clockBox.x + clockBox.width / 2, clockBox.y + clockBox.height / 2, { steps: 8 });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.dashboardWidget').first()).toHaveCSS('outline-style', 'none');
+  await page.mouse.up();
+  await expect.poll(() => addTile.evaluate((element) => ({ column: (element as HTMLElement).style.gridColumn, row: (element as HTMLElement).style.gridRow }))).toEqual(addSlot);
+  await expect(page.locator('.dashboardWidget[data-layout-motion]')).toHaveCount(0);
+  const overlaps = await page.locator('.dashboardWidget').evaluateAll((elements) => elements.flatMap((element, index) => {
+    const left = element.getBoundingClientRect();
+    return elements.slice(index + 1).filter((candidate) => {
+      const right = candidate.getBoundingClientRect();
+      return left.left < right.right - .5 && left.right > right.left + .5 && left.top < right.bottom - .5 && left.bottom > right.top + .5;
+    }).map((candidate) => `${(element as HTMLElement).dataset.desktopKey}|${(candidate as HTMLElement).dataset.desktopKey}`);
+  }));
+  expect(overlaps).toEqual([]);
+  await page.reload();
+  await expect(addTile).toHaveCSS('grid-column', addSlot.column);
+  await expect(addTile).toHaveCSS('grid-row', addSlot.row);
+});
+
+test('waits for actual collision boxes before displacing a neighboring widget', async () => {
+  if (!context) throw new Error('Browser context was not created');
+  let serviceWorker = context.serviceWorkers()[0];
+  serviceWorker ??= await context.waitForEvent('serviceworker');
+  const extensionId = new URL(serviceWorker.url()).host;
+  const page = await context.newPage();
+  await page.setViewportSize({ width: 667, height: 900 });
+  await page.goto(`chrome-extension://${extensionId}/newtab.html`);
+  const greeting = page.locator('[data-widget-id="greeting"]');
+  const box = await greeting.boundingBox();
+  if (!box) throw new Error('Greeting was not measurable');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 15, { steps: 6 });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.dashboardBoard')).not.toHaveClass(/reflowPreview/);
+  await expect(page.locator('.dashboardWidget.isDisplaced')).toHaveCount(0);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 70, { steps: 6 });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.dashboardBoard')).toHaveClass(/reflowPreview/);
+  await expect(page.locator('.dashboardWidget.isDisplaced')).toHaveCount(1);
+  await page.mouse.up();
+});
+
 test('hides, drags, and persists dashboard components on the board', async () => {
   if (!context) throw new Error('Browser context was not created');
   let serviceWorker = context.serviceWorkers()[0];
@@ -368,6 +562,8 @@ test('hides, drags, and persists dashboard components on the board', async () =>
   await page.waitForTimeout(650);
   await page.mouse.move(greeting.x + greeting.width / 2 - board.width / 6, greeting.y + greeting.height / 2, { steps: 8 });
   await page.mouse.up();
+  await expect(page.locator('[data-widget-id="greeting"]')).not.toHaveAttribute('data-layout-motion', 'damped-quartic');
+  await expect.poll(() => page.locator('[data-widget-id="greeting"]').evaluate((element) => (element as HTMLElement).style.translate)).toBe('');
   await expect.poll(() => page.locator('[data-widget-id="greeting"]').evaluate((element) => Number(getComputedStyle(element).gridColumnStart) - 1)).toBeLessThan(initialGreetingColumn);
   const movedGreetingColumn = await page.locator('[data-widget-id="greeting"]').evaluate((element) => Number(getComputedStyle(element).gridColumnStart) - 1);
   await expect.poll(() => readWidgetColumn(page, 'greeting')).toBe(movedGreetingColumn);
@@ -389,7 +585,11 @@ test('hides, drags, and persists dashboard components on the board', async () =>
   await expect.poll(() => greetingWidget.evaluate((element) => {
     const boardRect = element.parentElement!.getBoundingClientRect();
     const widgetRect = element.getBoundingClientRect();
-    return Math.abs(widgetRect.left + widgetRect.width / 2 - boardRect.left - boardRect.width / 2);
+    const contentRect = element.firstElementChild!.getBoundingClientRect();
+    return Math.max(
+      Math.abs((contentRect.left + contentRect.width / 2) - (boardRect.left + boardRect.width / 2)),
+      Math.abs((contentRect.left + contentRect.width / 2) - (widgetRect.left + widgetRect.width / 2)),
+    );
   })).toBeLessThan(1);
   await expect.poll(() => readWidgetColumn(page, 'greeting')).toBe(20);
   await page.reload();
@@ -397,7 +597,11 @@ test('hides, drags, and persists dashboard components on the board', async () =>
   await expect.poll(() => centeredGreeting.evaluate((element) => {
     const boardRect = element.parentElement!.getBoundingClientRect();
     const widgetRect = element.getBoundingClientRect();
-    return Math.abs(widgetRect.left + widgetRect.width / 2 - boardRect.left - boardRect.width / 2);
+    const contentRect = element.firstElementChild!.getBoundingClientRect();
+    return Math.max(
+      Math.abs((contentRect.left + contentRect.width / 2) - (boardRect.left + boardRect.width / 2)),
+      Math.abs((contentRect.left + contentRect.width / 2) - (widgetRect.left + widgetRect.width / 2)),
+    );
   })).toBeLessThan(1);
   const greetingContent = centeredGreeting.locator('.greeting');
   await expect(greetingContent).toHaveCSS('white-space', 'nowrap');
@@ -406,7 +610,14 @@ test('hides, drags, and persists dashboard components on the board', async () =>
   await page.getByRole('checkbox', { name: /Search|搜索/, exact: true }).check();
   await page.getByRole('button', { name: /Restore default|恢复默认/, exact: true }).click();
   await page.getByRole('button', { name: /Close|关闭/ }).click();
-  await expect(page.locator('[data-widget-id="search"]')).toHaveCSS('grid-column-start', '15');
+  await expect(page.locator('[data-widget-id="search"]')).toHaveCSS('grid-column-start', '13');
+  for (const widgetId of ['clock', 'greeting', 'focusTimer', 'search', 'quickNote', 'dailyQuote']) {
+    await expect.poll(() => page.locator(`[data-widget-id="${widgetId}"]`).evaluate((element) => {
+      const board = element.parentElement!.getBoundingClientRect();
+      const content = element.firstElementChild!.getBoundingClientRect();
+      return Math.abs((content.left + content.width / 2) - (board.left + board.width / 2));
+    })).toBeLessThan(1);
+  }
   for (const [widgetId, contentSelector] of [['focusTimer', '.focusTimer'], ['search', '.search']] as const) {
     const centers = await page.locator(`[data-widget-id="${widgetId}"]`).evaluate((element, selector) => {
       const outer = element.getBoundingClientRect();
@@ -420,9 +631,12 @@ test('hides, drags, and persists dashboard components on the board', async () =>
     return elements.map((element) => {
       const section = element.getBoundingClientRect();
       const content = element.firstElementChild!.getBoundingClientRect();
+      const columnSpan = Number(/span (\d+)/.exec((element as HTMLElement).style.gridColumn)?.[1] ?? 1);
+      const rowSpan = Number(/span (\d+)/.exec((element as HTMLElement).style.gridRow)?.[1] ?? 1);
       return {
         id: (element as HTMLElement).dataset.widgetId,
-        difference: section.width - content.width,
+        difference: section.width - (boardWidth / 48) * columnSpan,
+        heightDifference: section.height - 40 * rowSpan,
         centerDifference: Math.abs(section.left + section.width / 2 - content.left - content.width / 2),
         columnWidth: boardWidth / 48,
       };
@@ -430,8 +644,8 @@ test('hides, drags, and persists dashboard components on the board', async () =>
   });
   for (const footprint of measuredFootprints) {
     expect(footprint.difference, `${footprint.id} footprint must cover its content`).toBeGreaterThanOrEqual(-0.5);
-    expect(footprint.difference, `${footprint.id} centered footprint must add less than two grid columns`).toBeLessThan(footprint.columnWidth * 2 + 0.5);
     expect(footprint.centerDifference, `${footprint.id} content must be visually centered`).toBeLessThan(1);
+    expect(footprint.heightDifference, `${footprint.id} section must remain intrinsic`).toBeLessThan(1);
   }
   const centeredBox = await centeredGreeting.boundingBox();
   if (!centeredBox) throw new Error('Centered greeting was not measurable');
@@ -442,13 +656,18 @@ test('hides, drags, and persists dashboard components on the board', async () =>
   await page.waitForTimeout(650);
   await page.mouse.move(centeredBox.x + centeredBox.width / 2, centeredBox.y + centeredBox.height / 2 + 80, { steps: 6 });
   await page.waitForTimeout(450);
-  await expect(page.locator('.dashboardBoard')).not.toHaveClass(/reflowPreview/);
+  await expect(page.locator('.dashboardBoard')).toHaveClass(/reflowPreview/);
   await expect(centeredGreeting).toHaveCSS('grid-row-start', originalGreetingRow);
-  await expect(page.locator('[data-widget-id="focusTimer"]')).toHaveCSS('grid-row-start', originalFocusRow);
-  await page.mouse.move(centeredBox.x + centeredBox.width / 2, centeredBox.y + centeredBox.height / 2 + 120, { steps: 3 });
-  await page.waitForTimeout(250);
+  const displacedWidget = page.locator('.dashboardWidget.isDisplaced').first();
+  await expect(displacedWidget).toBeVisible();
+  const displacedKey = await displacedWidget.getAttribute('data-desktop-key');
+  if (!displacedKey) throw new Error('Displaced widget had no stable desktop key');
+  const animatedWidget = page.locator(`[data-desktop-key="${displacedKey}"]`);
+  await expect(animatedWidget).toHaveAttribute('data-layout-motion', 'damped-quartic');
+  await page.mouse.move(centeredBox.x + centeredBox.width / 2, centeredBox.y + centeredBox.height / 2, { steps: 6 });
   await expect(centeredGreeting).toHaveCSS('grid-row-start', originalGreetingRow);
-  await expect(page.locator('[data-widget-id="focusTimer"]')).toHaveCSS('grid-row-start', originalFocusRow);
+  await expect(animatedWidget).not.toHaveClass(/isDisplaced/);
+  await expect(animatedWidget).toHaveAttribute('data-layout-motion', 'damped-quartic');
   await page.mouse.up();
   await expect(page.locator('.dashboardBoard')).not.toHaveClass(/reflowPreview/);
   await expect(centeredGreeting).toHaveCSS('grid-row-start', originalGreetingRow);
@@ -457,7 +676,7 @@ test('hides, drags, and persists dashboard components on the board', async () =>
   const committedGreetingRow = Number(committedRows.greeting) - 1;
   await expect.poll(() => page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -567,7 +786,7 @@ test('customizes the search box and shows local history and online suggestions',
   await expect(background).toHaveCSS('--range-progress', '100%');
   await expect.poll(() => page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -603,7 +822,7 @@ test('customizes the search box and shows local history and online suggestions',
   await expect(searchInput).toHaveValue('');
   await page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -635,7 +854,7 @@ test('customizes the search box and shows local history and online suggestions',
 async function readSetting(page: import('@playwright/test').Page, key: string): Promise<unknown> {
   return page.evaluate(async (settingKey) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -650,7 +869,7 @@ async function readSetting(page: import('@playwright/test').Page, key: string): 
 async function readWidgetColumn(page: import('@playwright/test').Page, widgetId: string): Promise<number | undefined> {
   return page.evaluate(async (id) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -665,7 +884,7 @@ async function readWidgetColumn(page: import('@playwright/test').Page, widgetId:
 async function setQuickNotePreset(page: import('@playwright/test').Page, preset: 'small' | 'medium' | 'large'): Promise<void> {
   await page.evaluate(async (nextPreset) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -689,7 +908,7 @@ async function setQuickNotePreset(page: import('@playwright/test').Page, preset:
 async function readWidgetSizePreset(page: import('@playwright/test').Page, widgetId: string): Promise<string | undefined> {
   return page.evaluate(async (id) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('isu-new-tab');
+      const request = indexedDB.open('isu-newtab');
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });

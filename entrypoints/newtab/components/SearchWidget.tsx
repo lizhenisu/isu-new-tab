@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { browser } from 'wxt/browser';
 import { t } from '../../../core/browser/i18n';
 import type { SearchHistorySource, SearchPreferences } from '../../../core/domain/types';
@@ -20,14 +20,29 @@ export function SearchWidget({ preferences, historySource }: { preferences: Sear
   const [lensOpen, setLensOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
+
+  const updateHistory = useCallback((entries: SearchHistoryEntry[]) => {
+    // A history provider may resolve after a test/browser document has been
+    // torn down. Avoid dispatching into React once its window is gone.
+    if (mountedRef.current && typeof window !== 'undefined') setHistory(entries);
+  }, []);
 
   useEffect(() => {
+    let cancelled = false;
     if (!preferences.historyEnabled) {
       setHistory([]);
-      return;
+      return () => { cancelled = true; };
     }
-    void loadHistory(historySource, setHistory);
-  }, [historySource, preferences.historyEnabled]);
+    void loadHistory(historySource, (entries) => {
+      if (!cancelled) updateHistory(entries);
+    });
+    return () => { cancelled = true; };
+  }, [historySource, preferences.historyEnabled, updateHistory]);
 
   useEffect(() => {
     setActiveIndex(-1);
@@ -93,7 +108,7 @@ export function SearchWidget({ preferences, historySource }: { preferences: Sear
           value={query}
           placeholder={t('searchGooglePrompt')}
           onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
-          onFocus={() => { setOpen(true); if (preferences.historyEnabled) void loadHistory(historySource, setHistory); }}
+          onFocus={() => { setOpen(true); if (preferences.historyEnabled) void loadHistory(historySource, updateHistory); }}
           onKeyDown={onKeyDown}
           aria-label={t('searchPlaceholder')}
           aria-autocomplete="list"

@@ -1,5 +1,5 @@
 import { compareBySortKey } from './sort';
-import { DEFAULT_GROUP_ID, type AppConfig, type Shortcut, type ShortcutGroup } from './types';
+import { DEFAULT_GROUP_ID, type AppConfig, type Revision, type Shortcut, type ShortcutGroup } from './types';
 import {
   DASHBOARD_COLUMNS,
   DASHBOARD_ROW_HEIGHT,
@@ -8,14 +8,37 @@ import {
   type WidgetPosition,
   type WidgetSizePreset,
 } from './widgets';
+import type { DesktopCollisionGeometry } from './desktop-collision';
 
 export const DESKTOP_ICON_SIZE = { width: 4, height: 3 } as const;
 
-export type DesktopItem =
-  | { kind: 'system-widget'; key: `widget:${SystemWidgetId}`; id: SystemWidgetId; position: WidgetPosition; sizePreset: WidgetSizePreset; movable: true }
-  | { kind: 'shortcut'; key: `shortcut:${string}`; entity: Shortcut; position: WidgetPosition; movable: true }
-  | { kind: 'folder'; key: `folder:${string}`; entity: ShortcutGroup; children: Shortcut[]; position: WidgetPosition; movable: true }
-  | { kind: 'add-shortcut'; key: 'add-shortcut'; position: WidgetPosition; movable: true };
+export type DesktopContainer =
+  | { kind: 'desktop' }
+  | { kind: 'folder'; folderId: string }
+  | { kind: 'hidden' };
+
+type DesktopNodeBase = {
+  key: string;
+  container: DesktopContainer;
+  movable: boolean;
+  revision: Revision;
+  position?: WidgetPosition;
+};
+
+export type DesktopNode =
+  | (DesktopNodeBase & { kind: 'system-widget'; key: `widget:${SystemWidgetId}`; id: SystemWidgetId; sizePreset: WidgetSizePreset })
+  | (DesktopNodeBase & { kind: 'shortcut'; key: `shortcut:${string}`; entity: Shortcut })
+  | (DesktopNodeBase & { kind: 'folder'; key: `folder:${string}`; entity: ShortcutGroup; children: Shortcut[] })
+  | (DesktopNodeBase & { kind: 'add-shortcut'; key: 'add-shortcut' });
+
+export type DesktopItem = DesktopNode & { container: { kind: 'desktop' }; position: WidgetPosition };
+
+export type DesktopSnapshot = {
+  columns: typeof DASHBOARD_COLUMNS;
+  rowHeight: typeof DASHBOARD_ROW_HEIGHT;
+  nodes: DesktopNode[];
+  fingerprint: string;
+};
 
 export type DesktopPlacement = {
   kind: 'system-widget' | 'shortcut' | 'folder' | 'add-shortcut';
@@ -24,19 +47,128 @@ export type DesktopPlacement = {
   sizePreset?: WidgetSizePreset;
 };
 
-export type SystemWidgetFootprintOverrides = Partial<Record<SystemWidgetId, Partial<Pick<WidgetPosition, 'width' | 'height'>>>>;
+export type DesktopCommit = {
+  fingerprint: string;
+  placements: DesktopPlacement[];
+  /** Runtime-only validation data; never persisted or synchronized. */
+  collisionGeometry?: DesktopCollisionGeometry;
+};
 
-export function measuredWidthToGridColumns(measuredWidth: number, boardWidth: number): number {
-  if (!Number.isFinite(measuredWidth) || !Number.isFinite(boardWidth) || measuredWidth <= 0 || boardWidth <= 0) return 1;
-  const columnWidth = boardWidth / DASHBOARD_COLUMNS;
-  return Math.max(1, Math.min(DASHBOARD_COLUMNS, Math.ceil((measuredWidth - 0.5) / columnWidth)));
+export function buildDesktopSnapshot(config: AppConfig): DesktopSnapshot {
+  const widgetRevision = config.appearance.widgetLayout.revision;
+  const nodes: DesktopNode[] = resolveWidgetLayout(config.appearance.widgetLayout.value).map((item) => {
+    const id = item.id as SystemWidgetId;
+    const position = logicalWidgetPosition(config, id, item.position);
+    return {
+      kind: 'system-widget',
+      key: `widget:${id}` as const,
+      id,
+      sizePreset: item.sizePreset ?? 'medium',
+      movable: true,
+      revision: widgetRevision,
+      container: item.enabled ? { kind: 'desktop' } : { kind: 'hidden' },
+      position,
+    };
+  });
+
+  for (const shortcut of [...config.shortcuts].sort(compareBySortKey)) {
+    nodes.push({
+      kind: 'shortcut',
+      key: `shortcut:${shortcut.id}`,
+      entity: shortcut,
+      movable: true,
+      revision: shortcut.revision,
+      container: shortcut.groupId === DEFAULT_GROUP_ID ? { kind: 'desktop' } : { kind: 'folder', folderId: shortcut.groupId },
+      ...(shortcut.groupId === DEFAULT_GROUP_ID ? { position: normalizeIconRect(shortcut.position) } : {}),
+    });
+  }
+
+  for (const group of config.groups.filter((item) => item.id !== DEFAULT_GROUP_ID).sort(compareBySortKey)) {
+    nodes.push({
+      kind: 'folder',
+      key: `folder:${group.id}`,
+      entity: group,
+      children: config.shortcuts.filter((item) => item.groupId === group.id).sort(compareBySortKey),
+      movable: true,
+      revision: group.revision,
+      container: { kind: 'desktop' },
+      position: normalizeIconRect(group.position),
+    });
+  }
+
+  const storedAdd = config.appearance.widgetLayout.value.find((item) => item.id === 'addShortcut');
+  nodes.push({
+    kind: 'add-shortcut',
+    key: 'add-shortcut',
+    movable: true,
+    revision: widgetRevision,
+    container: { kind: 'desktop' },
+    position: normalizeIconRect(storedAdd?.position),
+  });
+
+  return {
+    columns: DASHBOARD_COLUMNS,
+    rowHeight: DASHBOARD_ROW_HEIGHT,
+    nodes,
+    fingerprint: desktopFingerprint(nodes),
+  };
 }
 
-export function measuredSizeToGridFootprint(measuredWidth: number, measuredHeight: number, boardWidth: number): Pick<WidgetPosition, 'width' | 'height'> {
-  const height = Number.isFinite(measuredHeight) && measuredHeight > 0
-    ? Math.max(1, Math.ceil((measuredHeight - 0.5) / DASHBOARD_ROW_HEIGHT))
-    : 1;
-  return { width: measuredWidthToGridColumns(measuredWidth, boardWidth), height };
+export function desktopItems(snapshot: DesktopSnapshot): DesktopItem[] {
+  return snapshot.nodes.filter((node): node is DesktopItem => node.container.kind === 'desktop' && Boolean(node.position));
+}
+
+export function desktopPlacements(items: DesktopItem[]): DesktopPlacement[] {
+  return items.map((item) => {
+    if (item.kind === 'add-shortcut') return { kind: item.kind, id: 'addShortcut', position: item.position };
+    if (item.kind === 'system-widget') return { kind: item.kind, id: item.id, position: item.position, sizePreset: item.sizePreset };
+    return { kind: item.kind, id: item.entity.id, position: item.position };
+  });
+}
+
+export function snapshotWithDesktopItems(snapshot: DesktopSnapshot, items: DesktopItem[]): DesktopSnapshot {
+  const replacements = new Map(items.map((item) => [item.key, item]));
+  const nodes = snapshot.nodes.map((node) => replacements.get(node.key) ?? node);
+  for (const item of items) if (!nodes.some((node) => node.key === item.key)) nodes.push(item);
+  return { ...snapshot, nodes, fingerprint: desktopFingerprint(nodes) };
+}
+
+export function validateDesktopItems(items: DesktopItem[], options: { allowLogicalOverlap?: boolean } = {}): void {
+  const keys = new Set<string>();
+  for (const item of items) {
+    if (keys.has(item.key)) throw new Error('DESKTOP_DUPLICATE_KEY');
+    keys.add(item.key);
+    if (!isInsideBoard(item.position)) throw new Error('DESKTOP_ITEM_OUTSIDE_BOARD');
+  }
+  if (options.allowLogicalOverlap) return;
+  for (const [index, item] of items.entries()) {
+    if (items.slice(index + 1).some((candidate) => overlaps(item.position, candidate.position))) {
+      throw new Error('DESKTOP_ITEMS_OVERLAP');
+    }
+  }
+}
+
+export function firstFreePosition(
+  occupied: WidgetPosition[],
+  size: Pick<WidgetPosition, 'width' | 'height'> = DESKTOP_ICON_SIZE,
+  start: Pick<WidgetPosition, 'column' | 'row'> = { column: 0, row: 0 },
+): WidgetPosition {
+  const origin = normalizeTarget({ ...start, ...size, gridVersion: 3 }, { ...start, ...size, gridVersion: 3 });
+  const maxRadius = Math.max(DASHBOARD_COLUMNS, ...occupied.map((item) => item.row + item.height), origin.row) + 200;
+  for (let radius = 0; radius <= maxRadius; radius += 1) {
+    const candidates: WidgetPosition[] = [];
+    for (let rowOffset = -radius; rowOffset <= radius; rowOffset += 1) {
+      const columnOffset = radius - Math.abs(rowOffset);
+      for (const signed of columnOffset === 0 ? [0] : [-columnOffset, columnOffset]) {
+        const candidate = normalizeTarget({ ...origin, column: origin.column + signed, row: origin.row + rowOffset }, origin);
+        if (Math.abs(candidate.column - origin.column) + Math.abs(candidate.row - origin.row) !== radius) continue;
+        candidates.push(candidate);
+      }
+    }
+    candidates.sort((left, right) => left.row - right.row || left.column - right.column);
+    for (const candidate of candidates) if (!occupied.some((position) => overlaps(candidate, position))) return candidate;
+  }
+  throw new Error('DESKTOP_POSITION_EXHAUSTED');
 }
 
 export function centeredGridSpan(span: number, columns = DASHBOARD_COLUMNS): number {
@@ -48,103 +180,30 @@ export function isHorizontallyCentered(position: WidgetPosition, columns = DASHB
   return position.column === Math.round((columns - position.width) / 2);
 }
 
-export function firstFreePosition(
-  occupied: WidgetPosition[],
-  size: Pick<WidgetPosition, 'width' | 'height'> = DESKTOP_ICON_SIZE,
-  start: Pick<WidgetPosition, 'column' | 'row'> = { column: 0, row: 0 },
-): WidgetPosition {
-  const startIndex = Math.max(0, start.row * DASHBOARD_COLUMNS + start.column);
-  for (let index = startIndex; index < 100_000; index += 1) {
-    const column = index % DASHBOARD_COLUMNS;
-    const row = Math.floor(index / DASHBOARD_COLUMNS);
-    if (column + size.width > DASHBOARD_COLUMNS) continue;
-    const candidate: WidgetPosition = { column, row, width: size.width, height: size.height, gridVersion: 3 };
-    if (!occupied.some((position) => overlaps(candidate, position))) return candidate;
-  }
-  throw new Error('DESKTOP_POSITION_EXHAUSTED');
+export function overlaps(left: WidgetPosition, right: WidgetPosition): boolean {
+  return left.column < right.column + right.width
+    && left.column + left.width > right.column
+    && left.row < right.row + right.height
+    && left.row + left.height > right.row;
 }
 
-export function resolveDesktopItems(config: AppConfig, footprintOverrides: SystemWidgetFootprintOverrides = {}): DesktopItem[] {
-  const widgets: DesktopItem[] = [];
-  const occupied: WidgetPosition[] = [];
-  for (const item of resolveWidgetLayout(config.appearance.widgetLayout.value).filter((item) => item.enabled)) {
-    const id = item.id as SystemWidgetId;
-    const centered = isHorizontallyCentered(item.position);
-    const override = footprintOverrides[id];
-    const minimumWidth = override?.width ? clamp(override.width, 1, DASHBOARD_COLUMNS) : undefined;
-    const measuredWidth = minimumWidth && centered ? centeredGridSpan(minimumWidth) : minimumWidth;
-    const candidate = measuredWidth || override?.height
-      ? {
-          ...item.position,
-          width: measuredWidth ?? item.position.width,
-          height: Math.max(item.position.height, override?.height ?? item.position.height),
-          column: centered && measuredWidth
-            ? Math.round((DASHBOARD_COLUMNS - measuredWidth) / 2)
-            : clamp(item.position.column, 0, DASHBOARD_COLUMNS - (measuredWidth ?? item.position.width)),
-        }
-      : item.position;
-    const position = occupied.some((placed) => overlaps(candidate, placed))
-      ? firstFreePosition(occupied, candidate, { column: candidate.column, row: candidate.row })
-      : candidate;
-    occupied.push(position);
-    widgets.push({
-      kind: 'system-widget',
-      key: `widget:${id}` as `widget:${SystemWidgetId}`,
-      id,
-      position,
-      sizePreset: item.sizePreset ?? 'medium',
-      movable: true,
-    });
-  }
-  const desktop: DesktopItem[] = [...widgets];
-  for (const shortcut of config.shortcuts.filter((item) => item.groupId === DEFAULT_GROUP_ID).sort(compareBySortKey)) {
-    const position = normalizedIconPosition(shortcut.position, occupied);
-    occupied.push(position);
-    desktop.push({ kind: 'shortcut', key: `shortcut:${shortcut.id}`, entity: shortcut, position, movable: true });
-  }
-  for (const group of config.groups.filter((item) => item.id !== DEFAULT_GROUP_ID).sort(compareBySortKey)) {
-    const position = normalizedIconPosition(group.position, occupied);
-    occupied.push(position);
-    desktop.push({
-      kind: 'folder',
-      key: `folder:${group.id}`,
-      entity: group,
-      children: config.shortcuts.filter((item) => item.groupId === group.id).sort(compareBySortKey),
-      position,
-      movable: true,
-    });
-  }
-  const storedAdd = config.appearance.widgetLayout.value.find((item) => item.id === 'addShortcut')?.position;
-  const addPosition = normalizedIconPosition(storedAdd, occupied, positionAfterLast(occupied));
-  desktop.push({ kind: 'add-shortcut', key: 'add-shortcut', position: addPosition, movable: true });
-  return desktop;
+export function isInsideBoard(position: WidgetPosition): boolean {
+  return position.column >= 0 && position.row >= 0 && position.width > 0 && position.height > 0
+    && position.column + position.width <= DASHBOARD_COLUMNS;
 }
 
-export function reflowDesktopItems(items: DesktopItem[], activeKey: string, target: WidgetPosition): DesktopItem[] {
-  const movable = items;
-  const active = movable.find((item) => item.key === activeKey);
-  if (!active) return items;
-  const ordered = movable.filter((item) => item.key !== activeKey).sort(compareDesktopPosition);
-  const placed: DesktopItem[] = [{ ...active, position: normalizeTarget(target, active.position) } as DesktopItem];
-  for (const item of ordered) {
-    const occupied = placed.map((candidate) => candidate.position);
-    const position = occupied.some((candidate) => overlaps(item.position, candidate))
-      ? firstFreePosition(occupied, item.position, { column: item.position.column, row: item.position.row })
-      : item.position;
-    placed.push({ ...item, position } as DesktopItem);
-  }
-  const byKey = new Map(placed.map((item) => [item.key, item]));
-  return movable.map((item) => byKey.get(item.key) ?? item);
+export function normalizeTarget(target: WidgetPosition, footprint: WidgetPosition): WidgetPosition {
+  return {
+    ...footprint,
+    column: clamp(target.column, 0, DASHBOARD_COLUMNS - footprint.width),
+    row: Math.max(0, Math.round(target.row)),
+    gridVersion: 3,
+  };
 }
 
-export function desktopPlacements(items: DesktopItem[]): DesktopPlacement[] {
-  const placements: DesktopPlacement[] = [];
-  for (const item of items) {
-    if (item.kind === 'add-shortcut') placements.push({ kind: item.kind, id: 'addShortcut', position: item.position });
-    else if (item.kind === 'system-widget') placements.push({ kind: item.kind, id: item.id, position: item.position, sizePreset: item.sizePreset });
-    else placements.push({ kind: item.kind, id: item.entity.id, position: item.position });
-  }
-  return placements;
+export function samePosition(left: WidgetPosition | undefined, right: WidgetPosition | undefined): boolean {
+  return Boolean(left && right && left.column === right.column && left.row === right.row
+    && left.width === right.width && left.height === right.height && left.gridVersion === right.gridVersion);
 }
 
 export function migrateDesktopPositions(config: AppConfig): {
@@ -156,114 +215,68 @@ export function migrateDesktopPositions(config: AppConfig): {
   const next = structuredClone(config);
   const legacy = next.appearance.widgetLayout.value.find((item) => item.id === 'shortcuts');
   const storedAdd = next.appearance.widgetLayout.value.find((item) => item.id === 'addShortcut');
-  const resolvedWidgets = resolveWidgetLayout(next.appearance.widgetLayout.value);
+  const storedSystem = next.appearance.widgetLayout.value.filter((item) => item.id !== 'shortcuts' && item.id !== 'addShortcut');
+  const resolved = resolveWidgetLayout(next.appearance.widgetLayout.value);
+  const occupied = resolved.filter((item) => item.enabled).map((item) => logicalWidgetPosition(next, item.id as SystemWidgetId, item.position));
   let widgetLayoutChanged = Boolean(legacy) || !storedAdd
-    || next.appearance.widgetLayout.value.some((item) => item.id !== 'shortcuts' && item.id !== 'addShortcut' && !item.sizePreset);
-  next.appearance.widgetLayout.value = resolvedWidgets;
-  const occupied = resolvedWidgets.filter((item) => item.enabled).map((item) => item.position);
-  let addPosition: WidgetPosition | undefined;
-  if (storedAdd?.position) {
-    addPosition = normalizedIconPosition(storedAdd.position, occupied);
-    occupied.push(addPosition);
-  }
-  let cursor = legacy?.position ? { column: legacy.position.column, row: legacy.position.row } : positionAfterLast(occupied);
+    || JSON.stringify(storedSystem) !== JSON.stringify(resolved);
+  next.appearance.widgetLayout.value = resolved;
   const changedShortcuts: string[] = [];
   const changedGroups: string[] = [];
+  const seed = legacy?.position ?? { column: 0, row: Math.max(0, ...occupied.map((item) => item.row + item.height)), width: 4, height: 3, gridVersion: 3 };
+
   for (const shortcut of next.shortcuts.filter((item) => item.groupId === DEFAULT_GROUP_ID).sort(compareBySortKey)) {
-    const position = normalizedIconPosition(shortcut.position, occupied, cursor);
+    const desired = normalizeIconRect(shortcut.position ?? seed);
+    const position = occupied.some((item) => overlaps(item, desired)) ? firstFreePosition(occupied, DESKTOP_ICON_SIZE, desired) : desired;
     if (!samePosition(shortcut.position, position)) changedShortcuts.push(shortcut.id);
     shortcut.position = position;
     occupied.push(position);
-    cursor = positionAfter(position);
+  }
+  for (const shortcut of next.shortcuts.filter((item) => item.groupId !== DEFAULT_GROUP_ID)) {
+    if (shortcut.position) changedShortcuts.push(shortcut.id);
+    delete shortcut.position;
   }
   for (const group of next.groups.filter((item) => item.id !== DEFAULT_GROUP_ID).sort(compareBySortKey)) {
-    const position = normalizedIconPosition(group.position, occupied, cursor);
+    const desired = normalizeIconRect(group.position ?? seed);
+    const position = occupied.some((item) => overlaps(item, desired)) ? firstFreePosition(occupied, DESKTOP_ICON_SIZE, desired) : desired;
     if (!samePosition(group.position, position)) changedGroups.push(group.id);
     group.position = position;
     occupied.push(position);
-    cursor = positionAfter(position);
   }
-  addPosition ??= normalizedIconPosition(undefined, occupied, cursor);
+  const desiredAdd = normalizeIconRect(storedAdd?.position ?? seed);
+  const addPosition = occupied.some((item) => overlaps(item, desiredAdd)) ? firstFreePosition(occupied, DESKTOP_ICON_SIZE, desiredAdd) : desiredAdd;
   if (!samePosition(storedAdd?.position, addPosition)) widgetLayoutChanged = true;
   next.appearance.widgetLayout.value.push({ id: 'addShortcut', enabled: true, position: addPosition });
-  return { config: next, changedShortcuts, changedGroups, widgetLayoutChanged };
+  return { config: next, changedShortcuts: [...new Set(changedShortcuts)], changedGroups, widgetLayoutChanged };
 }
 
-export function repairDesktopEntityPositions(
-  groups: ShortcutGroup[],
-  shortcuts: Shortcut[],
-  widgetLayout: AppConfig['appearance']['widgetLayout']['value'],
-): { groups: ShortcutGroup[]; shortcuts: Shortcut[]; changedGroups: string[]; changedShortcuts: string[] } {
-  const nextGroups = structuredClone(groups);
-  const nextShortcuts = structuredClone(shortcuts);
-  const occupied = resolveWidgetLayout(widgetLayout).filter((item) => item.enabled).map((item) => item.position);
-  const addPosition = widgetLayout.find((item) => item.id === 'addShortcut' && item.enabled)?.position;
-  if (addPosition) occupied.push(addPosition);
-  const changedShortcuts: string[] = [];
-  const changedGroups: string[] = [];
-  for (const shortcut of nextShortcuts.filter((item) => item.groupId === DEFAULT_GROUP_ID).sort(compareBySortKey)) {
-    const position = normalizedIconPosition(shortcut.position, occupied);
-    if (!samePosition(shortcut.position, position)) changedShortcuts.push(shortcut.id);
-    shortcut.position = position;
-    occupied.push(position);
-  }
-  for (const group of nextGroups.filter((item) => item.id !== DEFAULT_GROUP_ID).sort(compareBySortKey)) {
-    const position = normalizedIconPosition(group.position, occupied);
-    if (!samePosition(group.position, position)) changedGroups.push(group.id);
-    group.position = position;
-    occupied.push(position);
-  }
-  return { groups: nextGroups, shortcuts: nextShortcuts, changedGroups, changedShortcuts };
-}
-
-export function overlaps(left: WidgetPosition, right: WidgetPosition): boolean {
-  return left.column < right.column + right.width
-    && left.column + left.width > right.column
-    && left.row < right.row + right.height
-    && left.row + left.height > right.row;
-}
-
-function normalizedIconPosition(
-  position: WidgetPosition | undefined,
-  occupied: WidgetPosition[],
-  start?: Pick<WidgetPosition, 'column' | 'row'>,
-): WidgetPosition {
-  if (position) {
-    const normalized: WidgetPosition = {
-      column: clamp(position.column, 0, DASHBOARD_COLUMNS - DESKTOP_ICON_SIZE.width),
-      row: Math.max(0, Math.round(position.row)),
-      ...DESKTOP_ICON_SIZE,
-      gridVersion: 3,
-    };
-    if (!occupied.some((item) => overlaps(item, normalized))) return normalized;
-  }
-  return firstFreePosition(occupied, DESKTOP_ICON_SIZE, start);
-}
-
-function compareDesktopPosition(left: DesktopItem, right: DesktopItem): number {
-  return left.position.row - right.position.row || left.position.column - right.position.column || left.key.localeCompare(right.key);
-}
-
-function normalizeTarget(target: WidgetPosition, fallback: WidgetPosition): WidgetPosition {
+function logicalWidgetPosition(config: AppConfig, id: SystemWidgetId, position: WidgetPosition): WidgetPosition {
+  if (id !== 'search') return { ...position, gridVersion: 3 };
+  const width = centeredGridSpan(Math.ceil(config.appearance.search.value.widthPercent * 0.4));
+  const centered = isHorizontallyCentered(position);
   return {
-    ...fallback,
-    column: clamp(target.column, 0, DASHBOARD_COLUMNS - fallback.width),
-    row: Math.max(0, Math.round(target.row)),
+    ...position,
+    width,
+    column: centered ? Math.round((DASHBOARD_COLUMNS - width) / 2) : clamp(position.column, 0, DASHBOARD_COLUMNS - width),
+    gridVersion: 3,
   };
 }
 
-function positionAfter(position: WidgetPosition): Pick<WidgetPosition, 'column' | 'row'> {
-  const column = position.column + position.width;
-  return column >= DASHBOARD_COLUMNS ? { column: 0, row: position.row + position.height } : { column, row: position.row };
+function normalizeIconRect(position?: WidgetPosition): WidgetPosition {
+  return {
+    column: clamp(position?.column ?? 0, 0, DASHBOARD_COLUMNS - DESKTOP_ICON_SIZE.width),
+    row: Math.max(0, Math.round(position?.row ?? 0)),
+    ...DESKTOP_ICON_SIZE,
+    gridVersion: 3,
+  };
 }
 
-function positionAfterLast(positions: WidgetPosition[]): Pick<WidgetPosition, 'column' | 'row'> {
-  const last = [...positions].sort((left, right) => left.row - right.row || left.column - right.column).at(-1);
-  return last ? positionAfter(last) : { column: 0, row: 0 };
-}
-
-function samePosition(left: WidgetPosition | undefined, right: WidgetPosition): boolean {
-  return Boolean(left && left.column === right.column && left.row === right.row && left.width === right.width && left.height === right.height && left.gridVersion === right.gridVersion);
+function desktopFingerprint(nodes: DesktopNode[]): string {
+  return [...nodes].sort((left, right) => left.key.localeCompare(right.key)).map((node) => {
+    const container = node.container.kind === 'folder' ? `folder:${node.container.folderId}` : node.container.kind;
+    const position = node.position ? `${node.position.column},${node.position.row},${node.position.width},${node.position.height}` : '-';
+    return `${node.key}|${container}|${position}|${node.revision.counter}@${node.revision.deviceId}`;
+  }).join(';');
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

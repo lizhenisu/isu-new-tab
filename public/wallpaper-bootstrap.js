@@ -13,6 +13,7 @@
     }
   } catch {}
   const root = document.documentElement;
+  root.dataset.wallpaperBootstrap = background;
   root.style.background = background;
   root.style.backgroundPosition = 'center';
   root.style.backgroundSize = 'cover';

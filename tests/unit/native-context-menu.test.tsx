@@ -26,6 +26,10 @@ describe('native desktop context menu', () => {
     expect(widget[CONTEXT_MENU_IDS.size]?.visible).toBe(true);
     expect(widget[CONTEXT_MENU_IDS.sizeMedium]?.checked).toBe(true);
     expect(nativeMenuState({ kind: 'system-widget', key: 'widget:search', widgetId: 'search', sizePreset: 'medium' })[CONTEXT_MENU_IDS.size]?.visible).toBe(false);
+
+    expect(nativeMenuState({ kind: 'folder', key: 'folder:full', empty: false })[CONTEXT_MENU_IDS.delete]?.enabled).toBe(false);
+    expect(isDesktopContextActionAllowed('delete', { kind: 'folder', key: 'folder:full', empty: false })).toBe(false);
+    expect(nativeMenuState({ kind: 'folder', key: 'folder:empty', empty: true })[CONTEXT_MENU_IDS.delete]?.enabled).toBe(true);
   });
 
   it('registers the Isu menu and routes only valid clicks to the matching tab port', async () => {
@@ -82,7 +86,7 @@ describe('native desktop context menu', () => {
       onRenameGroup: vi.fn(), onDeleteGroup: vi.fn(), onMoveShortcut: vi.fn(), onMoveGroup: vi.fn(),
     };
     const { container } = render(<DashboardBoard layout={config.appearance.widgetLayout.value} context={context}
-      onPlacementsChange={vi.fn()} onLayoutChange={vi.fn()} />);
+      onDesktopCommit={vi.fn()} onWidgetEnabledChange={vi.fn()} />);
     const board = container.querySelector('.dashboardBoard')!;
     const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     board.dispatchEvent(event);

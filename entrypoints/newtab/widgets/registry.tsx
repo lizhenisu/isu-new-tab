@@ -19,8 +19,10 @@ export type DashboardWidgetContext = {
   onDeleteShortcut(id: string): Promise<void>;
   onRenameGroup(group: ShortcutGroup): void;
   onDeleteGroup(group: ShortcutGroup): Promise<void>;
-  onMoveShortcut(id: string, groupId: string, beforeId?: string, afterId?: string, position?: WidgetPosition): Promise<void>;
+  onMoveShortcut(id: string, groupId: string, beforeId?: string, afterId?: string, position?: WidgetPosition, commit?: import('../../../core/domain/desktop').DesktopCommit): Promise<void>;
   onMoveGroup(id: string, beforeId?: string, afterId?: string): Promise<void>;
+  onSetWidgetEnabled?(id: SystemWidgetId, enabled: boolean): Promise<void>;
+  onSetWidgetSize?(id: SystemWidgetId, preset: import('../../../core/domain/widgets').WidgetSizePreset): Promise<void>;
 };
 
 type WidgetDefinition = {

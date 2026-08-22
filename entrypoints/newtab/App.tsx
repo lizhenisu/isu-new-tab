@@ -12,10 +12,11 @@ import { ShortcutEditor } from './components/ShortcutEditor';
 import { useSearchHistorySource } from './hooks/useSearchHistorySource';
 import { useAppLanguage } from './hooks/useAppLanguage';
 import type { DashboardWidgetContext } from './widgets/registry';
-import { DashboardBoard } from './widgets/DashboardBoard';
+import { PieceBoard } from './widgets/PieceBoard';
 
 export function App() {
   const config = useAppStore((state) => state.config);
+  const pieces = useAppStore((state) => state.pieces);
   const loading = useAppStore((state) => state.loading);
   const error = useAppStore((state) => state.error);
   const initialize = useAppStore((state) => state.initialize);
@@ -54,9 +55,17 @@ export function App() {
     onEditShortcut: setEditing,
     onDeleteShortcut: actions.deleteShortcut,
     onRenameGroup: (group) => { void renameGroup(group); },
-    onDeleteGroup: async (group) => { if (window.confirm(t('confirmDeleteGroup'))) await actions.deleteGroup(group.id); },
+    onDeleteGroup: async (group) => {
+      if (config.shortcuts.some((item) => item.groupId === group.id)) return;
+      if (window.confirm(t('confirmDeleteGroup'))) await actions.deleteGroup(group.id);
+    },
     onMoveShortcut: actions.moveShortcut,
     onMoveGroup: actions.moveGroup,
+    onSetWidgetEnabled: (id, enabled) => actions.setWidgetEnabled(id, enabled),
+    onSetWidgetSize: async (id, preset) => {
+      const layout = config.appearance.widgetLayout.value.map((item) => item.id === id ? { ...item, sizePreset: preset } : item);
+      await actions.updateAppearance('widgetLayout', layout);
+    },
   };
 
   return (
@@ -64,9 +73,7 @@ export function App() {
       <div className="backdrop" />
       <button className="settingsButton" type="button" onClick={() => setSettingsOpen(true)} aria-label={t('settings')}>⚙</button>
       <div className="content">
-        <DashboardBoard layout={config.appearance.widgetLayout.value} context={widgetContext}
-          onPlacementsChange={actions.applyDesktopPlacements}
-          onLayoutChange={(layout) => actions.updateAppearance('widgetLayout', layout)} />
+        <PieceBoard pieces={pieces} context={widgetContext} onPiecesChanged={actions.refresh} />
         {config.appearance.wallpaper.value.type === 'unsplash' && <UnsplashAttribution wallpaper={config.appearance.wallpaper.value} />}
       </div>
       {editing && <ShortcutEditor shortcut={'kind' in editing ? undefined : editing} groups={config.groups} defaultGroupId={DEFAULT_GROUP_ID}

@@ -36,16 +36,66 @@ button { cursor: pointer; }
 .backdrop { position: fixed; z-index: 1; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(9,22,35,.08), rgba(7,17,29,.24) 55%, rgba(5,13,24,.52)); }
 .app[data-wallpaper-tone="light"] .backdrop { background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(247,250,253,.12) 55%, rgba(231,237,244,.28)); }
 .content { position: relative; z-index: 2; display: grid; justify-items: center; width: 100%; margin: 0; padding: clamp(26px, 5vh, 58px) 0 42px; }
+.pieceBoard { position: relative; display: grid; grid-template-columns: repeat(48, minmax(0, 1fr)); grid-template-rows: repeat(var(--piece-rows), 40px); width: 100%; min-height: calc(var(--piece-rows) * 40px); }
+.pieceBoard::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: 0; background-image: linear-gradient(to right, rgba(255,255,255,.11) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,.11) 1px, transparent 1px); background-size: calc(100% / 48) 40px; transition: opacity .18s; }
+.pieceBoard--dragging::before { opacity: .48; }
+.piece { position: relative; z-index: 1; display: grid; min-width: 0; min-height: 0; place-items: center; padding: 0; transition: filter .2s, opacity .2s; }
+.pieceBoard .piece { width: 100%; height: 100%; max-width: none; align-self: stretch; justify-self: stretch; }
+.pieceContent { display: grid; place-items: center; width: 100%; height: 100%; min-width: 0; min-height: 0; }
+.piece--system-widget .pieceContent { container-type: inline-size; overflow: hidden; }
+.piece--system-widget .greeting { width: 100%; max-width: 100%; margin: 0; overflow: hidden; font-size: clamp(13px, 10cqw, 48px); text-overflow: clip; white-space: nowrap; }
+.piece--system-widget .greeting--compact { font-size: clamp(10px, min(2.1vw, 7cqw), 28px); }
+.piece--system-widget .dailyQuote { display: grid; grid-template-rows: minmax(0, 1fr) auto; align-items: center; width: 100%; height: 100%; max-width: 100%; margin: 0; overflow: hidden; }
+.piece--system-widget .dailyQuote blockquote { display: grid; place-items: center; min-width: 0; min-height: 0; width: 100%; max-width: 100%; max-height: none; overflow: visible; font-size: clamp(11px, min(1.8vw, 4.5cqw), 20px); line-height: 1.15; }
+.piece--system-widget .dailyQuote--dense blockquote { font-size: clamp(11px, min(1.55vw, 3.8cqw), 17px); line-height: 1.15; }
+.piece--system-widget .dailyQuote--compact blockquote { font-size: clamp(10px, min(1.35vw, 3.2cqw), 15px); line-height: 1.12; }
+.piece--system-widget .dailyQuote figcaption { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.piece--editable { cursor: grab; }
+.piece--dragging { z-index: 20; cursor: grabbing; opacity: .88; filter: drop-shadow(0 18px 26px rgba(0,0,0,.35)); }
+.pieceBoard--dragging .piece--editable::after { content: ""; position: absolute; inset: 0; pointer-events: none; border: 1px dashed rgba(210,239,255,.9); border-radius: 14px; background: rgba(155,214,255,.06); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
+.piece--system-widget .pieceContent > * { max-width: 100%; }
+.piece--system-widget .quickNote {
+  width: 100%;
+  max-width: none;
+  /* The note is already bounded by its piece. Keep only the glass inset
+     highlights so the component does not paint a shadow into neighbouring
+     grid cells. */
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.58), inset 1px 0 1px rgba(255,255,255,.15), inset 0 -1px 1px rgba(255,255,255,.06);
+}
+.piece--system-widget .quickNote::after { display: none; }
+.pieceShortcut, .pieceFolder, .pieceAdd { display: grid; place-items: center; align-content: center; gap: 6px; width: 100%; height: 100%; min-width: 0; padding: 3px; border: 0; color: var(--hero-text); background: transparent; text-decoration: none; }
+.pieceShortcut > span:last-child, .pieceFolder strong, .pieceAdd strong { max-width: 100%; overflow: hidden; color: var(--hero-muted); font-size: 12px; font-weight: 520; line-height: 1.2; text-overflow: ellipsis; text-shadow: 0 2px 7px rgba(0,0,0,.62); white-space: nowrap; }
+.pieceIcon, .pieceAdd > span { display: grid; place-items: center; width: 58px; height: 58px; border: 1px solid rgba(255,255,255,.66); border-radius: 17px; background: linear-gradient(145deg, rgba(255,255,255,.98), rgba(219,234,243,.78)); box-shadow: inset 1px 1px 1px #fff, inset -1px -1px 1px rgba(86,119,140,.2), 0 11px 24px rgba(0,0,0,.28); }
+.pieceIcon img { width: 36px; height: 36px; object-fit: contain; }
+.pieceAdd > span { color: var(--hero-text); background: rgba(221,239,247,.16); font-size: 32px; font-weight: 300; border-style: dashed; }
+.pieceFolderPreview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; width: 62px; height: 62px; padding: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,.48); border-radius: 19px; background: linear-gradient(145deg, rgba(220,239,247,.3), rgba(31,48,67,.38)); box-shadow: inset 1px 1px 1px rgba(255,255,255,.6), 0 12px 26px rgba(0,0,0,.28); }
+.pieceFolderPreview img { width: 100%; height: 100%; min-width: 0; object-fit: contain; border-radius: 4px; background: rgba(255,255,255,.78); }
+.pieceShortcut:hover .pieceIcon, .pieceAdd:hover > span, .pieceFolder:hover .pieceFolderPreview { transform: translateY(-3px) scale(1.04); }
 .dashboardBoard { position: relative; display: grid; grid-template-columns: repeat(48, minmax(0, 1fr)); grid-template-rows: repeat(var(--board-rows), 40px); width: 100%; min-height: calc(var(--board-rows) * 40px); }
 .dashboardBoard::before { content: ""; position: absolute; z-index: -1; inset: 0; border: 1px solid transparent; border-radius: 22px; pointer-events: none; background-image: linear-gradient(to right, rgba(255,255,255,.055) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,.055) 1px, transparent 1px); background-size: calc(100% / 48) 40px; opacity: 0; transition: opacity .2s, border-color .2s; mask-image: linear-gradient(to bottom, transparent, #000 4%, #000 96%, transparent); }
 .dashboardBoard.dragging::before { border-color: rgba(206,235,255,.24); opacity: .9; }
 .dashboardBoard.reflowPreview::before { border-color: rgba(174,244,224,.38); box-shadow: inset 0 0 42px rgba(109,218,196,.08); }
-.dashboardWidget { position: relative; z-index: 1; display: grid; align-content: center; justify-items: center; min-width: 0; width: 100%; padding: 6px; transition: filter .18s, opacity .18s; }
+/* PieceBoard also keeps the legacy class for selectors and context-menu tests.
+   Override its old pseudo-element so the active grid is actually above the
+   wallpaper and adapts to light solid wallpapers. */
+.dashboardBoard.pieceBoard::before { z-index: 0; border: 0; border-radius: 0; background-image: linear-gradient(to right, var(--piece-grid-color, rgba(255,255,255,.24)) 1px, transparent 1px), linear-gradient(to bottom, var(--piece-grid-color, rgba(255,255,255,.24)) 1px, transparent 1px); background-size: calc(100% / 48) 40px; mask-image: none; }
+.dashboardBoard.pieceBoard.pieceBoard--dragging::before { opacity: 1; }
+.dashboardBoard.pieceBoard { --piece-grid-color: rgba(255,255,255,.24); }
+.app[data-wallpaper-tone="light"] .dashboardBoard.pieceBoard { --piece-grid-color: rgba(23,32,51,.26); }
+.pieceBoard--dragging .piece--editable::after { border-color: var(--piece-grid-color, rgba(255,255,255,.24)); background: transparent; box-shadow: inset 0 0 0 1px var(--piece-grid-color, rgba(255,255,255,.24)); }
+.dashboardWidget { position: relative; z-index: 1; display: grid; align-self: center; align-content: center; justify-self: center; justify-items: center; min-width: 0; width: fit-content; max-width: none; height: fit-content; padding: 0; transition: filter .18s, opacity .18s; }
+.dashboardBoard .piece.piece--dragging,
+.dashboardBoard .dashboardWidget.isDragging {
+  /* Grid items establish their own stacking order.  Keep the active piece
+     above every other piece while dnd-kit applies its pointer transform. */
+  z-index: 1000;
+}
 .desktopItem--system-widget { padding-inline: 0; }
-.dashboardBoard.dragging .dashboardWidget { border-radius: 18px; outline: 1px solid rgba(207,235,255,.2); cursor: grab; }
+.dashboardBoard.dragging .dashboardWidget { cursor: grab; }
+.dashboardBoard.dragging .dashboardWidget::after { content: ""; position: absolute; z-index: 3; pointer-events: none; left: var(--collision-left, 0px); top: var(--collision-top, 0px); width: var(--collision-width, 100%); height: var(--collision-height, 100%); box-sizing: border-box; border: 1px dashed rgba(210,239,255,.9); border-radius: 14px; background: rgba(155,214,255,.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 0 20px rgba(107,191,255,.14); }
 .dashboardBoard.dragging .dashboardWidget * { cursor: grab !important; }
 .dashboardWidget.isDragging { z-index: 8; opacity: .92; filter: drop-shadow(0 22px 24px rgba(2,10,22,.42)); }
-.dashboardWidget.isDisplaced { outline-color: rgba(174,244,224,.42); filter: drop-shadow(0 12px 18px rgba(3,30,37,.2)); }
+.dashboardWidget.isDisplaced { filter: drop-shadow(0 12px 18px rgba(3,30,37,.2)); }
 .dashboardWidget.isDragging,
 .dashboardWidget.isDragging * { cursor: grabbing !important; user-select: none; }
 .dashboardWidget .focusTimer,
@@ -55,7 +105,11 @@ button { cursor: pointer; }
 .dashboardWidget .primaryActions { margin-top: 0; }
 .dashboardWidget .greeting { margin: 0; }
 .dashboardWidget .heroDate { margin-top: 12px; }
-.dashboardWidget--search { grid-template-columns: minmax(0, 1fr); }
+.dashboardWidget--search,
+.dashboardWidget--quickNote { width: 100%; max-width: none; }
+.dashboardWidget--focusTimer { width: min(410px, calc(100vw - 28px)); }
+.dashboardWidget--greeting { width: max-content; max-width: calc(100vw - 28px); }
+.dashboardWidget--dailyQuote { width: max-content; max-width: min(680px, calc(33.333vw - 2px), calc(100vw - 28px)); }
 .dashboardWidget--shortcuts { align-content: start; }
 .dashboardWidget--shortcuts .shortcutsWidget { max-height: 100%; overflow: auto; scrollbar-width: thin; }
 .dashboardWidget--shortcuts .shortcutGrid { min-height: 68px; padding-top: 4px; }
@@ -64,7 +118,7 @@ button { cursor: pointer; }
 .dashboardHeader { display: grid; justify-items: center; color: var(--hero-text); text-align: center; text-shadow: 0 3px 20px rgba(0,0,0,.42); }
 .heroTime { font-size: clamp(64px, 8vw, 122px); font-weight: 300; letter-spacing: -.065em; line-height: .88; }
 .heroDate { margin-top: 20px; font-size: clamp(17px, 2.2vw, 24px); font-weight: 560; }
-.greeting { width: max-content; max-width: none; margin: 18px 0 0; color: var(--hero-text); font-size: clamp(26px, 3.4vw, 48px); font-weight: 520; line-height: 1.15; text-shadow: 0 3px 20px rgba(0,0,0,.42); white-space: nowrap; }
+.greeting { width: max-content; min-width: 0; max-width: calc(100vw - 28px); margin: 18px 0 0; overflow: visible; color: var(--hero-text); font-size: clamp(13px, 6vw, 48px); font-weight: 520; line-height: 1.15; text-align: center; text-shadow: 0 3px 20px rgba(0,0,0,.42); white-space: nowrap; }
 .settingsButton, .iconButton { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--glass-edge); background: var(--glass); color: var(--text); backdrop-filter: blur(calc(var(--blur) + 14px)) saturate(175%) brightness(1.08); box-shadow: inset 0 1px 1px rgba(255,255,255,.65), inset 0 -1px 1px rgba(255,255,255,.08), 0 10px 30px var(--glass-depth); }
 .settingsButton { position: fixed; z-index: 10; top: 22px; right: 22px; color: var(--hero-text); opacity: .72; transition: opacity .2s, transform .2s; }
 .settingsButton:hover { opacity: 1; transform: rotate(20deg); }
@@ -172,6 +226,46 @@ button { cursor: pointer; }
   border-color: rgba(255,255,255,.62);
   box-shadow: inset 0 1px 2px rgba(255,255,255,.75), inset 0 -1px 1px rgba(255,255,255,.1), 0 18px 44px rgba(2,10,22,.34), 0 0 0 3px rgba(202,235,255,.1);
 }
+.piece--system-widget .quickNote:focus-within {
+  /* Focus still changes the edge, but must not cast a shadow outside the
+     piece when the note textarea receives focus. */
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.58), inset 1px 0 1px rgba(255,255,255,.15), inset 0 -1px 1px rgba(255,255,255,.06);
+}
+.piece--system-widget .search {
+  /* Keep the Google-style surface without a lateral shadow leaking beyond
+     the search piece. */
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.82), inset 0 -1px 2px rgba(55,82,108,.12);
+}
+.piece--system-widget .search:focus-within {
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.82), inset 0 -1px 2px rgba(55,82,108,.12);
+}
+.piece--system-widget .searchWidgetShell.hasSuggestions .search,
+.piece--system-widget .searchWidgetShell.hasSuggestions .search:focus-within {
+  box-shadow: none;
+}
+.piece--add-shortcut .pieceAdd > span {
+  /* The icon keeps its inset depth, but must not cast a shadow into
+     neighbouring grid cells. */
+  background: linear-gradient(145deg, rgba(255,255,255,.98), rgba(219,234,243,.78));
+  backdrop-filter: none;
+  box-shadow: inset 1px 1px 1px #fff, inset -1px -1px 1px rgba(86,119,140,.2);
+}
+.piece--shortcut .pieceShortcut > span:last-child,
+.piece--add-shortcut .pieceAdd > strong {
+  text-shadow: none;
+}
+.piece--system-widget .focusTimer .timerModes,
+.piece--system-widget .focusTimer .roundControl,
+.piece--system-widget .focusTimer .focusState {
+  /* Build depth entirely inside the control so no shadow leaks below it. */
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.55), inset 0 -2px 3px rgba(55,82,108,.14);
+}
+.piece--system-widget .focusTimer .timerModes button.active {
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.68), inset 0 -2px 3px rgba(55,82,108,.16);
+}
+.piece--system-widget .focusTimer .roundControl:hover {
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.68), inset 0 -2px 3px rgba(55,82,108,.16);
+}
 .primaryActions { display: flex; justify-content: center; gap: 8px; margin: 18px 0 4px; }
 .primaryActions button { border: 1px solid var(--glass-edge); color: var(--hero-text); background: rgba(113,103,228,.3); backdrop-filter: blur(calc(var(--blur) + 12px)) saturate(175%); box-shadow: inset 0 1px 1px rgba(255,255,255,.48), inset 0 -1px 1px rgba(255,255,255,.06), 0 8px 20px var(--glass-depth); }
 .primaryActions button.secondary { color: var(--hero-muted); background: var(--glass); }
@@ -202,7 +296,7 @@ button:disabled { opacity: .45; cursor: default; }
 .emptyGroup { min-width: 260px; min-height: 64px; display: grid; place-items: center; border: 1px dashed var(--border); border-radius: 14px; color: var(--hero-muted); }
 .desktopItem--shortcut,
 .desktopItem--folder,
-.desktopItem--add-shortcut { align-content: center; padding: 4px; }
+.desktopItem--add-shortcut { align-content: center; padding: 0; }
 .desktopShortcut,
 .desktopFolder,
 .desktopAddTile { display: grid; justify-items: center; align-content: center; gap: 7px; width: 100%; min-width: 0; height: 100%; padding: 4px; border: 0; color: var(--hero-text); background: transparent; text-decoration: none; }
@@ -232,8 +326,8 @@ button:disabled { opacity: .45; cursor: default; }
 .folderDialogItem:hover .folderItemActions { opacity: 1; }
 .folderItemActions button { padding: 4px 6px; color: var(--hero-muted); background: rgba(255,255,255,.1); font-size: 10px; }
 .emptyFolder { grid-column: 1 / -1; padding: 28px; color: var(--hero-muted); text-align: center; }
-.dailyQuote { display: grid; justify-items: center; width: max-content; max-width: min(680px, calc(100vw - 28px)); margin: 30px 0 0; color: var(--hero-text); text-align: center; text-shadow: 0 2px 12px rgba(0,0,0,.46); }
-.dailyQuote blockquote { max-width: 100%; margin: 0; font-size: clamp(17px, 2.4vw, 25px); font-weight: 520; line-height: 1.4; }
+.dailyQuote { display: grid; justify-items: center; width: max-content; min-width: 0; max-width: min(680px, calc(33.333vw - 2px), calc(100vw - 28px)); margin: 30px 0 0; color: var(--hero-text); text-align: center; text-shadow: 0 2px 12px rgba(0,0,0,.46); }
+.dailyQuote blockquote { width: max-content; max-width: min(680px, calc(33.333vw - 2px), calc(100vw - 28px)); margin: 0; overflow: visible; overflow-wrap: anywhere; font-size: clamp(17px, 2.4vw, 25px); font-weight: 520; line-height: 1.4; text-overflow: clip; white-space: normal; }
 .dailyQuote figcaption { margin-top: 5px; color: var(--hero-muted); font-size: 12px; font-weight: 450; line-height: 1.35; }
 .dailyQuote a { color: inherit; text-underline-offset: 2px; }
 .modalBackdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(3,8,18,.44); backdrop-filter: blur(12px) saturate(125%); }
@@ -436,11 +530,16 @@ select option { color: #172033; }
 .loading { min-height: 100vh; display: grid; place-items: center; color: #5f6368; background: transparent; }
 @media (max-width: 640px) {
   .content { width: min(100% - 22px, 700px); padding-top: 34px; }
+  .pieceBoard { display: flex; flex-direction: column; gap: 18px; min-height: 0 !important; }
+  .piece { min-height: 0; transform: none !important; }
   .dashboardBoard { display: flex; flex-direction: column; gap: 18px; min-height: 0 !important; }
   .dashboardBoard::before { display: none; }
   .dashboardWidget { min-height: auto; padding: 0; transform: none !important; }
   .heroTime { font-size: 72px; }
   .greeting { font-size: 32px; }
+  .dashboardWidget--dailyQuote,
+  .dailyQuote,
+  .dailyQuote blockquote { max-width: calc(100vw - 22px); }
   .settingsButton { top: 12px; right: 12px; }
   .quickNote { padding: 20px 18px 14px; }
   .wallpaperChoices { grid-template-columns: repeat(2, 1fr); }

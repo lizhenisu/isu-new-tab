@@ -16,7 +16,9 @@ import {
 } from '../domain/types';
 import { canonicalStringify } from './codec';
 import { compareBySortKey } from '../domain/sort';
-import { repairDesktopEntityPositions } from '../domain/desktop';
+import { buildDesktopSnapshot, desktopPlacements, samePosition } from '../domain/desktop';
+import { executeDesktopCommand } from '../layout/desktop-lifecycle';
+import { PIECE_MAX_X, PIECE_MIN_X, piecePositionsOverlap, type Piece, type PiecePosition } from '../domain/pieces';
 
 export function createSyncProjection(config: AppConfig): SyncAppConfig {
   const { wallpaper, ...appearance } = config.appearance;
@@ -45,6 +47,7 @@ export function createEnvelope(
   metadata: SyncMetadata,
   revision: Revision,
   epoch: number,
+  pieces: Piece[] = [],
 ): SyncEnvelope {
   return {
     schemaVersion: 1,
@@ -52,6 +55,7 @@ export function createEnvelope(
     epoch,
     revision,
     config: createSyncProjection(config),
+    pieces: structuredClone(pieces),
     metadata: structuredClone(metadata),
   };
 }
@@ -105,32 +109,123 @@ function mergeWithBase(
   const repaired = repairInvariants(groupMerge.entities, shortcutMerge.entities, revision);
   const wallpaper = mergeOptionalThreeWay(base?.config.appearance.wallpaper, local.config.appearance.wallpaper, remote.config.appearance.wallpaper);
   const widgetLayout = mergeVersionedThreeWay(base?.config.appearance.widgetLayout, local.config.appearance.widgetLayout, remote.config.appearance.widgetLayout);
-  const desktopRepair = repairDesktopEntityPositions(repaired.groups, repaired.shortcuts, widgetLayout.value);
-  for (const group of desktopRepair.groups) if (desktopRepair.changedGroups.includes(group.id)) group.revision = revision;
-  for (const shortcut of desktopRepair.shortcuts) if (desktopRepair.changedShortcuts.includes(shortcut.id)) shortcut.revision = revision;
+  const theme = mergeVersionedThreeWay(base?.config.appearance.theme, local.config.appearance.theme, remote.config.appearance.theme);
+  const blur = mergeVersionedThreeWay(base?.config.appearance.blur, local.config.appearance.blur, remote.config.appearance.blur);
+  const cardSize = mergeVersionedThreeWay(base?.config.appearance.cardSize, local.config.appearance.cardSize, remote.config.appearance.cardSize);
+  const search = mergeVersionedThreeWay(base?.config.appearance.search, local.config.appearance.search, remote.config.appearance.search);
+  const mergedConfig: SyncEnvelope['config'] = {
+    schemaVersion: 1,
+    datasetId: local.datasetId,
+    updatedAt: new Date().toISOString(),
+    groups: repaired.groups,
+    shortcuts: repaired.shortcuts,
+    appearance: { theme, blur, cardSize, widgetLayout, search, ...(wallpaper ? { wallpaper } : {}) },
+  };
+  // A piece is a placement projection of a business entity.  Its bucket is
+  // merged independently for fine-grained sync, but a deleted shortcut or
+  // folder must never be resurrected by a stale piece from another device.
+  const pieces = repairMergedPieces(filterPiecesToConfig(
+    mergePieces(base?.pieces ?? [], local.pieces ?? [], remote.pieces ?? []),
+    mergedConfig,
+  ), revision);
+  const desktopRepair = executeDesktopCommand(buildDesktopSnapshot(mergedConfig as AppConfig), { type: 'repair' });
+  let widgetLayoutRepaired = false;
+  for (const placement of desktopPlacements(desktopRepair.items)) {
+    if (placement.kind === 'shortcut') {
+      const shortcut = mergedConfig.shortcuts.find((item) => item.id === placement.id)!;
+      if (!samePosition(shortcut.position, placement.position)) { shortcut.position = placement.position; shortcut.revision = revision; }
+    } else if (placement.kind === 'folder') {
+      const group = mergedConfig.groups.find((item) => item.id === placement.id)!;
+      if (!samePosition(group.position, placement.position)) { group.position = placement.position; group.revision = revision; }
+    } else {
+      const widget = widgetLayout.value.find((item) => item.id === placement.id);
+      if (widget && !samePosition(widget.position, placement.position)) { widget.position = placement.position; widgetLayoutRepaired = true; }
+    }
+  }
+  if (widgetLayoutRepaired) widgetLayout.revision = revision;
 
   return {
     schemaVersion: 1,
     datasetId: local.datasetId,
     epoch: local.epoch,
     revision,
-    config: {
-      schemaVersion: 1,
-      datasetId: local.datasetId,
-      updatedAt: new Date().toISOString(),
-      groups: desktopRepair.groups,
-      shortcuts: desktopRepair.shortcuts,
-      appearance: {
-        theme: mergeVersionedThreeWay(base?.config.appearance.theme, local.config.appearance.theme, remote.config.appearance.theme),
-        blur: mergeVersionedThreeWay(base?.config.appearance.blur, local.config.appearance.blur, remote.config.appearance.blur),
-        cardSize: mergeVersionedThreeWay(base?.config.appearance.cardSize, local.config.appearance.cardSize, remote.config.appearance.cardSize),
-        widgetLayout,
-        search: mergeVersionedThreeWay(base?.config.appearance.search, local.config.appearance.search, remote.config.appearance.search),
-        ...(wallpaper ? { wallpaper } : {}),
-      },
-    },
+    config: mergedConfig,
+    pieces,
     metadata: { tombstones },
   };
+}
+
+function filterPiecesToConfig(pieces: Piece[], config: SyncEnvelope['config']): Piece[] {
+  const widgetIds = new Set<string>(config.appearance.widgetLayout.value.map((widget) => widget.id));
+  const shortcutIds = new Set(config.shortcuts.map((shortcut) => shortcut.id));
+  const groupIds = new Set(config.groups.map((group) => group.id));
+  return pieces.filter((piece) => {
+    if (piece.kind === 'add-shortcut') return piece.id === 'piece:add-shortcut';
+    if (piece.kind === 'system-widget') return widgetIds.has(piece.payloadRef);
+    if (piece.kind === 'shortcut') return shortcutIds.has(piece.payloadRef);
+    return groupIds.has(piece.payloadRef);
+  });
+}
+
+function mergePieces(base: Piece[], local: Piece[], remote: Piece[]): Piece[] {
+  const byId = (items: Piece[]) => new Map(items.map((piece) => [piece.id, piece]));
+  const baseMap = byId(base);
+  const localMap = byId(local);
+  const remoteMap = byId(remote);
+  const ids = new Set([...baseMap.keys(), ...localMap.keys(), ...remoteMap.keys()]);
+  const merged: Piece[] = [];
+  for (const id of [...ids].sort()) {
+    const before = baseMap.get(id);
+    const left = localMap.get(id);
+    const right = remoteMap.get(id);
+    const changedLeft = JSON.stringify(left) !== JSON.stringify(before);
+    const changedRight = JSON.stringify(right) !== JSON.stringify(before);
+    const chosen = before && !changedLeft && changedRight ? right
+      : before && changedLeft && !changedRight ? left
+        : !left ? right
+          : !right ? left
+            : compareRevision(left.revision, right.revision) >= 0 ? left : right;
+    if (chosen) merged.push(structuredClone(chosen));
+  }
+  return merged;
+}
+
+function repairMergedPieces(pieces: Piece[], repairRevision: Revision): Piece[] {
+  const result = pieces.map((piece) => structuredClone(piece));
+  const priority = (piece: Piece): string => `${piece.kind === 'system-widget' ? '0' : piece.kind === 'folder' ? '1' : piece.kind === 'shortcut' ? '2' : '3'}:${piece.id}`;
+  const active = result.filter((piece) => piece.container.kind === 'desktop' && piece.position).sort((left, right) => {
+    const revisionOrder = compareRevision(right.revision, left.revision);
+    return revisionOrder || priority(left).localeCompare(priority(right));
+  });
+  const placed: Piece[] = [];
+  for (const piece of active) {
+    const original = piece.position!;
+    if (!placed.some((other) => piecePositionsOverlap(other.position!, original))) {
+      placed.push(piece);
+      continue;
+    }
+    const next = nearestPieceVacancy(original, placed);
+    piece.position = next;
+    piece.revision = repairRevision;
+    placed.push(piece);
+  }
+  return result;
+}
+
+function nearestPieceVacancy(original: PiecePosition, placed: Piece[]): PiecePosition {
+  const maxY = Math.max(original.y + 1, ...placed.map((piece) => (piece.position?.y ?? 0) + (piece.position?.height ?? 1))) + 1000;
+  const candidates: PiecePosition[] = [];
+  for (let y = 0; y <= maxY; y += 1) {
+    for (let x = PIECE_MIN_X; x <= PIECE_MAX_X - original.width; x += 1) {
+      const candidate = { ...original, x, y };
+      if (!placed.some((piece) => piece.position && piecePositionsOverlap(piece.position, candidate))) candidates.push(candidate);
+    }
+  }
+  candidates.sort((left, right) => {
+    const distance = Math.abs(left.x - original.x) + Math.abs(left.y - original.y) - Math.abs(right.x - original.x) - Math.abs(right.y - original.y);
+    return distance || left.y - right.y || left.x - right.x;
+  });
+  return candidates[0] ?? { ...original, x: PIECE_MIN_X, y: maxY };
 }
 
 function mergeEntityStates<T extends { id: string; revision: Revision }>(
@@ -200,6 +295,10 @@ function repairInvariants(groups: ShortcutGroup[], shortcuts: Shortcut[], revisi
       shortcut.groupId = DEFAULT_GROUP_ID;
       shortcut.revision = revision;
     }
+    if (shortcut.groupId !== DEFAULT_GROUP_ID && shortcut.position) {
+      delete shortcut.position;
+      shortcut.revision = revision;
+    }
   }
   groups.sort(compareBySortKey);
   shortcuts.sort(compareBySortKey);
@@ -238,7 +337,7 @@ export function envelopeContainsRevision(envelope: SyncEnvelope, entityType: str
     const value = envelope.config.appearance[entityId as keyof SyncAppConfig['appearance']];
     return Boolean(value && 'revision' in value && compareRevision(value.revision, revision) >= 0);
   }
-  const collection = entityType === 'group' ? envelope.config.groups : envelope.config.shortcuts;
+  const collection = entityType === 'group' ? envelope.config.groups : entityType === 'shortcut' ? envelope.config.shortcuts : envelope.pieces ?? [];
   const entity = collection.find((item) => item.id === entityId);
   if (entity && compareRevision(entity.revision, revision) >= 0) return true;
   const tombstone = envelope.metadata.tombstones.find((item) => item.entityType === entityType && item.entityId === entityId);

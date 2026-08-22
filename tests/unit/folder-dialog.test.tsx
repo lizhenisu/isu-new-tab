@@ -8,8 +8,6 @@ describe('FolderDialog', () => {
     render(<FolderDialog
       folder={{ id: 'folder', name: 'Work', collapsed: false, sortKey: 'a', revision: { counter: 1, deviceId: 'test' } }}
       shortcuts={[shortcut]} onClose={vi.fn()}
-      onMove={vi.fn().mockResolvedValue(undefined)} onMoveToDesktop={vi.fn().mockResolvedValue(undefined)}
-      boardPositionAt={() => undefined}
     />);
 
     expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', 'https://example.com/docs');
